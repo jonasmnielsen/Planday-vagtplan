@@ -250,3 +250,241 @@ if __name__ == "__main__":
     if not token:
         raise RuntimeError("Sæt DISCORD_TOKEN som miljøvariabel i Railway → Variables.")
     bot.run(token)
+
+# -------------------- Info-kommando med flotte embeds i DM --------------------
+from discord import ui, Interaction, Embed, Color
+
+class InfoButtons(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def send_embed_dm(self, interaction: Interaction, title: str, description: str, color: Color):
+        embed = Embed(title=title, description=description, color=color)
+        embed.set_footer(text="SOSDAH - ZodiacRP | Planday | Vagtplan")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig informationen som privat besked ✅", ephemeral=True)
+
+    # 📻 Brug af radio
+    @ui.button(label="📻 Brug af Radio", style=discord.ButtonStyle.primary)
+    async def radio(self, interaction: Interaction, button: ui.Button):
+        await self.send_embed_dm(
+            interaction,
+            "📻 Brug af Radio",
+            "Retningslinjer for korrekt brug af radio under udrykning, på stationen og ved opgaver.",
+            Color.blue()
+        )
+
+    # 🅿️ Parkering på stationerne
+    @ui.button(label="🅿️ Parkering på stationerne", style=discord.ButtonStyle.primary)
+    async def parkering(self, interaction: Interaction, button: ui.Button):
+        view = ui.View(timeout=None)
+
+        # Station 700 (ikke klar)
+        @ui.button(label="🏭 Station 700", style=discord.ButtonStyle.danger)
+        async def station700(inner_interaction: Interaction, btn: ui.Button):
+            await inner_interaction.response.send_message(
+                "🚧 **Parkering for Station 700 er endnu ikke tilgængelig.**\n\nDenne vejledning er under udarbejdelse.",
+                ephemeral=True
+            )
+
+        # Station 701 (åbner PDF)
+        @ui.button(label="🏢 Station 701", style=discord.ButtonStyle.success)
+        async def station701(inner_interaction: Interaction, btn: ui.Button):
+            embed = Embed(
+                title="🏢 Parkering på Station 701",
+                description=(
+                    "Her finder du vejledningen til korrekt parkering på **Station 701** i Los Santos.\n\n"
+                    "🔗 [Klik her for at åbne vejledningen (PDF)](file:///C:/Users/jonma/Downloads/Vejledning%20til%20parkering%20af%20k%C3%B8ret%C3%B8jer%20p%C3%A5%20SOS%20DAH%20Station%20701%20-%20Los%20Santos%20(1).pdf)\n\n"
+                    "📍 **Kort opsummering:**\n"
+                    "• Privatbiler foran stationen.\n"
+                    "• Lederbiler langs væggen.\n"
+                    "• 701-38, 701-02, 701-01 i værkstedet.\n"
+                    "• 701-21 og 700-52 i lille hal.\n"
+                    "• Skiltetrailer, autotrailer og Hilux i midterste hal."
+                ),
+                color=Color.green()
+            )
+            embed.set_footer(text="SOSDAH - ZodiacRP | Parkering 701")
+            await inner_interaction.user.send(embed=embed)
+            await inner_interaction.response.send_message("Jeg har sendt dig parkering for Station 701 ✅", ephemeral=True)
+
+        view.add_item(station700)
+        view.add_item(station701)
+
+        await interaction.user.send(
+            embed=Embed(
+                title="🅿️ Vælg station for parkering",
+                description="Vælg den station, du vil se parkeringsvejledningen for.",
+                color=Color.blurple()
+            ),
+            view=view
+        )
+        await interaction.response.send_message("Jeg har sendt dig mulighederne som privat besked ✅", ephemeral=True)
+
+    # 📋 Hændelsesrapport
+    @ui.button(label="📋 Hændelsesrapport", style=discord.ButtonStyle.primary)
+    async def haendelse(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="📋 Hændelsesrapport",
+            description=(
+                "Her kan du indsende en **hændelsesrapport** for en opgave, ulykke eller intern hændelse.\n\n"
+                "🔗 [Klik her for at åbne Hændelsesrapporten (Google Form)](https://forms.gle/aty5vnRq8wkpRuQC7)\n\n"
+                "📍 **Vejledning:**\n"
+                "• Udfyld rapporten så detaljeret som muligt.\n"
+                "• Sørg for at angive tidspunkt, sted og involverede personer.\n"
+                "• Ved alvorlige hændelser skal ledelsen kontaktes straks."
+            ),
+            color=Color.orange()
+        )
+        embed.set_footer(text="SOSDAH - ZodiacRP | Hændelsesrapport")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig linket til hændelsesrapporten som privat besked ✅", ephemeral=True)
+
+    # 🚨 Actioncard
+    @ui.button(label="🚨 Actioncard", style=discord.ButtonStyle.primary)
+    async def actioncard(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="🚨 Actioncard – Beslaglæggelsesdepot Del Perro",
+            description=(
+                "Her finder du det aktuelle **Actioncard** for beslaglæggelsesdepotet i Del Perro (8004).\n\n"
+                "🔗 [Klik her for at åbne Actioncard (PDF)](https://YOUR-LINK-HERE)\n\n"
+                "📍 **Indhold i vejledningen:**\n"
+                "• Nix-pille-område og adgangsregler.\n"
+                "• Almindelig opbevaring og placering.\n"
+                "• Beslaglæggelses-procedure og udfyldelse af seddel.\n"
+                "• Frigivelse af køretøjer godkendt af mekaniker.\n"
+                "• Sikkerhed og adgang – husk at alle porte skal låses.\n\n"
+                "_Dette er en politilokalitet – adgang kun i tjenstligt øjemed._"
+            ),
+            color=Color.red()
+        )
+        embed.set_footer(text="SOSDAH – ZodiacRP | Actioncard Del Perro")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig Actioncard-vejledningen som privat besked ✅", ephemeral=True)
+
+    # 🚗 Sikker i trafikken
+    @ui.button(label="🚗 Sikker i trafikken", style=discord.ButtonStyle.primary)
+    async def sikkertrafik(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="🚗 Sikker i trafikken",
+            description=(
+                "Din sikkerhed som redder er altid det vigtigste.\n\n"
+                "Denne vejledning beskriver, hvordan du arbejder sikkert på vejene, "
+                "hvordan du placerer dig korrekt, og hvorfor det er vigtigt aldrig at holde i modkørende retning.\n\n"
+                "🔗 [Klik her for at åbne hele vejledningen (PDF)](file:///C:/Users/jonma/Downloads/SOS%20Dansk%20Autohj%C3%A6lp%20A_S%20-%20Zodiac%20(3).pdf)\n\n"
+                "📍 **Kort opsummering:**\n"
+                "• Tænd altid lysbro, havariblink og arbejdslys.\n"
+                "• Stå aldrig med ryggen mod trafikken.\n"
+                "• Kald på TMA, hvis du arbejder uden for nødsporet.\n"
+                "• Hold aldrig i modkørende retning.\n"
+                "• Kontakt disponenten ved usikkerhed."
+            ),
+            color=Color.purple()
+        )
+        embed.set_footer(text="SOSDAH - ZodiacRP | Sikker i trafikken")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig vejledningen som privat besked ✅", ephemeral=True)
+
+    # 💰 Prisliste
+    @ui.button(label="💰 Prisliste", style=discord.ButtonStyle.secondary)
+    async def prisliste(self, interaction: Interaction, button: ui.Button):
+        await self.send_embed_dm(
+            interaction,
+            "💰 Prisliste",
+            "Den aktuelle prisliste for ydelser, assistancer og andre opgaver.",
+            Color.gold()
+        )
+
+    # 🚒 Flådestyring
+    @ui.button(label="🚒 Flådestyring", style=discord.ButtonStyle.secondary)
+    async def flaade(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="🚒 Flådestyring",
+            description=(
+                "Her kan du tilgå **SOS Dansk Autohjælps flådestyring**.\n\n"
+                "Du kan se live-status på køretøjer, tilgængelighed og øvrige oplysninger direkte i dokumentet.\n\n"
+                "🔗 [Klik her for at åbne Flådestyring (Google Sheets)](https://docs.google.com/spreadsheets/d/13Wi28C0wqG6sD6_mK5bw-SVp-ngKBRH7l-lehe5t3t4/edit?usp=sharing)\n\n"
+                "📍 **Bemærk:**\n"
+                "• Dokumentet kræver muligvis login til Google.\n"
+                "• Redigering er kun tilladt for autoriserede brugere."
+            ),
+            color=Color.teal()
+        )
+        embed.set_footer(text="SOSDAH - ZodiacRP | Flådestyring")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig linket til flådestyring som privat besked ✅", ephemeral=True)
+
+    # 👔 Ledelsen
+    @ui.button(label="👔 Ledelsen", style=discord.ButtonStyle.success)
+    async def ledelsen(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="👔 Ledelsen & Direktion",
+            color=Color.dark_gray()
+        )
+        embed.add_field(
+            name="🏛️ Direktionen",
+            value=(
+                "**Alex Wilson** — Distrikt Direktør (Administration)\n"
+                "**Allan Jensen** — Distrikt Direktør (Drift)\n\n"
+                "_De to ejer 50% af SOS Dansk Autohjælp i Los Santos._"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🧭 Distriktledelse",
+            value=(
+                "**Jonas Nielsen** — Distriktleder\n"
+                "Ansvarlig for disponering, ansættelser og daglig ledelse."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🎓 Uddannelsesledelse",
+            value=(
+                "**Kenneth Nielsen** — Uddannelsesleder\n"
+                "Ansvarlig for uddannelse, mentor-teamet og eksterne kurser."
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🏠 Stationsledelse",
+            value="**Tobias Hansen** — Stationsleder, Station 700",
+            inline=False
+        )
+        embed.set_footer(text="SOSDAH - ZodiacRP | Ledelsen")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig informationen om ledelsen ✅", ephemeral=True)
+
+    # 🎓 Mentor
+    @ui.button(label="🎓 Mentor", style=discord.ButtonStyle.success)
+    async def mentor(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="🎓 Mentor Team",
+            description=(
+                "Mentor-teamet hjælper nye reddere med oplæring, spørgsmål og støtte i dagligdagen.\n\n"
+                "**Mentorer:**\n"
+                "• Ethan Rhodes\n"
+                "• Lars Petersen\n"
+                "• Allan Jensen\n"
+                "• Jens Pedersen\n"
+                "• Kasper Jensen\n"
+                "• Kenneth Nielsen\n"
+                "• Lars Madsen\n"
+                "• Marcel Romano\n\n"
+                "_Du kan altid kontakte en mentor ved behov for vejledning._"
+            ),
+            color=Color.dark_green()
+        )
+        embed.set_footer(text="SOSDAH - ZodiacRP | Mentorordning")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig informationen om mentor-teamet ✅", ephemeral=True)
+
+
+@tree.command(name="info", description="Vis informationsbaren med knapper")
+async def info_cmd(interaction: discord.Interaction):
+    embed = Embed(
+        title="📘 Information & Dokumenter",
+        description="Tryk på en af knapperne herunder for at få informationen som privat besked.\n\n🧭 *Planday | SOSDAH - ZodiacRP*",
+        color=discord.Color.blue()
+    )
+    await interaction.response.send_message(embed=embed, view=InfoButtons())
