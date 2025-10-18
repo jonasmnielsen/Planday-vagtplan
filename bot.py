@@ -51,7 +51,7 @@ def dansk_dato(d: dt.date) -> str:
 
 # -------------------- Google Sheets klient --------------------
 SCOPES = ["https://docs.google.com/spreadsheets/d/1ME2-YiqghGYDChfZ4Rju86Orq81QUTzSlABWiY3Ezqo/edit?gid=0#gid=0"]
-CREDS = Credentials.from_service_account_info(json.loads(os.getenv("GOOGLE_CREDENTIALS")), scopes=SCOPES)
+CREDS = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
 gc = gspread.authorize(CREDS)
 
 
@@ -189,7 +189,6 @@ class BeskedModal(discord.ui.Modal, title="Tilføj besked til vagtplan"):
     async def on_submit(self, interaction: discord.Interaction):
         await self._cb(interaction, str(self.besked))
 
-# -------------------- Kommandoer --------------------
 # -------------------- Kommandoer --------------------
 @tree.command(name="vagtplan", description="Send dagens vagtplan i kanal med mulighed for besked")
 @app_commands.checks.has_role(ROLE_DISP)
@@ -513,6 +512,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
