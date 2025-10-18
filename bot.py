@@ -395,6 +395,27 @@ class InfoButtons(ui.View):
             Color.gold()
         )
 
+        # 👕 Tøjguide
+    @ui.button(label="👕 Tøjguide", style=discord.ButtonStyle.secondary)
+    async def tojguide(self, interaction: Interaction, button: ui.Button):
+        embed = Embed(
+            title="👕 Tøjguide — SOS Dansk Autohjælp",
+            description=(
+                "Her finder du den officielle **tøjguide** for SOS Dansk Autohjælp.\n\n"
+                "🔗 [Klik her for at åbne Tøjguiden (PDF)](file:///C:/Users/jonma/Downloads/T%C3%B8jguide%20til%20SOS%20Dansk%20Autohj%C3%A6lp%20(1).pdf)\n\n"
+                "📋 **Indhold:**\n"
+                "• Autoredder-uniform\n"
+                "• Kranfører-uniform\n"
+                "• Ledelses-uniform\n\n"
+                "_Guiden sikrer, at alle reddere er korrekt og professionelt klædt på til opgaven._"
+            ),
+            color=Color.dark_blue()
+        )
+        embed.set_footer(text="SOSDAH - ZodiacRP | Tøjguide")
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Jeg har sendt dig tøjguiden som privat besked ✅", ephemeral=True)
+
+
     # 🚒 Flådestyring
     @ui.button(label="🚒 Flådestyring", style=discord.ButtonStyle.secondary)
     async def flaade(self, interaction: Interaction, button: ui.Button):
@@ -482,4 +503,5 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
