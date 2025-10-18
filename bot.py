@@ -417,67 +417,61 @@ class InfoButtons(ui.View):
     # 👔 Ledelsen
     @ui.button(label="👔 Ledelsen", style=discord.ButtonStyle.success)
     async def ledelsen(self, interaction: Interaction, button: ui.Button):
-        embed = Embed(
-            title="👔 Ledelsen & Direktion",
-            color=Color.dark_gray()
-        )
-        embed.add_field(
-            name="🏛️ Direktionen",
-            value=(
-                "**Alex Wilson** — Distrikt Direktør (Administration)\n"
-                "**Allan Jensen** — Distrikt Direktør (Drift)\n\n"
-                "_De to ejer 50% af SOS Dansk Autohjælp i Los Santos._"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🧭 Distriktledelse",
-            value=(
-                "**Jonas Nielsen** — Distriktleder\n"
-                "Ansvarlig for disponering, ansættelser og daglig ledelse."
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🎓 Uddannelsesledelse",
-            value=(
-                "**Kenneth Nielsen** — Uddannelsesleder\n"
-                "Ansvarlig for uddannelse, mentor-teamet og eksterne kurser."
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🏠 Stationsledelse",
-            value="**Tobias Hansen** — Stationsleder, Station 700",
-            inline=False
-        )
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("Denne funktion kan kun bruges i en server.", ephemeral=True)
+            return
+
+        roles_to_show = ["Distriktleder", "Uddannelses Leder", "Stationsleder"]
+        embed = Embed(title="👔 Ledelsen — SOS Dansk Autohjælp", color=Color.dark_gray())
         embed.set_footer(text="SOSDAH - ZodiacRP | Ledelsen")
+
+        members_shown = False
+        for role_name in roles_to_show:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if role:
+                members = [m for m in role.members]
+                if members:
+                    for member in members:
+                        embed.add_field(
+                            name=f"{member.display_name} — {role_name}",
+                            value=f"[Profilbillede]({member.avatar.url if member.avatar else member.default_avatar.url})",
+                            inline=False
+                        )
+                        members_shown = True
+
+        if not members_shown:
+            embed.description = "Ingen medlemmer fundet i Ledelsen."
+
         await interaction.user.send(embed=embed)
-        await interaction.response.send_message("Jeg har sendt dig informationen om ledelsen ✅", ephemeral=True)
+        await interaction.response.send_message("Jeg har sendt dig listen over ledelsen som privat besked ✅", ephemeral=True)
+
 
     # 🎓 Mentor
     @ui.button(label="🎓 Mentor", style=discord.ButtonStyle.success)
     async def mentor(self, interaction: Interaction, button: ui.Button):
-        embed = Embed(
-            title="🎓 Mentor Team",
-            description=(
-                "Mentor-teamet hjælper nye reddere med oplæring, spørgsmål og støtte i dagligdagen.\n\n"
-                "**Mentorer:**\n"
-                "• Ethan Rhodes\n"
-                "• Lars Petersen\n"
-                "• Allan Jensen\n"
-                "• Jens Pedersen\n"
-                "• Kasper Jensen\n"
-                "• Kenneth Nielsen\n"
-                "• Lars Madsen\n"
-                "• Marcel Romano\n\n"
-                "_Du kan altid kontakte en mentor ved behov for vejledning._"
-            ),
-            color=Color.dark_green()
-        )
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("Denne funktion kan kun bruges i en server.", ephemeral=True)
+            return
+
+        role = discord.utils.get(guild.roles, name="Mentor")
+        embed = Embed(title="🎓 Mentor Team — SOS Dansk Autohjælp", color=Color.dark_green())
         embed.set_footer(text="SOSDAH - ZodiacRP | Mentorordning")
+
+        if role and role.members:
+            for member in role.members:
+                embed.add_field(
+                    name=f"{member.display_name} — Mentor",
+                    value=f"[Profilbillede]({member.avatar.url if member.avatar else member.default_avatar.url})",
+                    inline=False
+                )
+        else:
+            embed.description = "Ingen mentorer fundet på serveren."
+
         await interaction.user.send(embed=embed)
-        await interaction.response.send_message("Jeg har sendt dig informationen om mentor-teamet ✅", ephemeral=True)
+        await interaction.response.send_message("Jeg har sendt dig listen over mentorer som privat besked ✅", ephemeral=True)
+
 
 
 @tree.command(name="info", description="Vis informationsbaren med knapper")
@@ -488,3 +482,4 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
