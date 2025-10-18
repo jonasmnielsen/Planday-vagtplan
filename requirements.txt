@@ -1,0 +1,5 @@
+discord.py==2.4.0
+gspread==6.1.2
+google-auth==2.35.0
+python-dateutil==2.9.0.post0
+pytz==2024.1
