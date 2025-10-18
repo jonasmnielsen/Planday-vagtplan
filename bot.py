@@ -12,7 +12,7 @@ from discord.ext import tasks
 # -------------------- Konfiguration --------------------
 TOKEN = os.getenv("DISCORD_TOKEN")
 ROLE_DISP = "Disponent"
-CHANNEL_NAME = "「📰」vagtplan"
+CHANNEL_NAME = "vagtplan"
 TZ = ZoneInfo("Europe/Copenhagen")
 
 START_H = 19
@@ -429,6 +429,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
