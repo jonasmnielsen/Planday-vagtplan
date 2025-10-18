@@ -50,7 +50,7 @@ def dansk_dato(d: dt.date) -> str:
 
 
 # -------------------- Google Sheets klient --------------------
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SCOPES = ["https://docs.google.com/spreadsheets/d/1ME2-YiqghGYDChfZ4Rju86Orq81QUTzSlABWiY3Ezqo/edit?gid=0#gid=0"]
 CREDS = Credentials.from_service_account_file("service_account.json", scopes=SCOPES)
 gc = gspread.authorize(CREDS)
 
@@ -513,6 +513,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
