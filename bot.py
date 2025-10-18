@@ -12,7 +12,7 @@ from discord.ext import commands
 
 # --------------- Konfiguration ---------------
 TOKEN = os.getenv("DISCORD_TOKEN")  # Sæt i Railway Variables
-CHANNEL_NAME = "📰vagtplan"
+CHANNEL_NAME = "「📰」vagtplan"
 TZ = ZoneInfo("Europe/Copenhagen")
 START_H = 19
 START_M = 30
@@ -415,6 +415,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
