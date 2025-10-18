@@ -189,29 +189,34 @@ class BeskedModal(discord.ui.Modal, title="Tilføj besked til vagtplan"):
     async def on_submit(self, interaction: discord.Interaction):
         await self._cb(interaction, str(self.besked))
 
-
 # -------------------- Kommandoer --------------------
 @tree.command(name="vagtplan", description="Send dagens vagtplan i kanal med mulighed for besked")
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan_cmd(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)  # Forhindrer timeout
+
     async def after_modal(inter: discord.Interaction, besked_txt: str | None):
-        guild = inter.guild
-        if guild is None:
-            await inter.response.send_message("Kan kun bruges i en server.", ephemeral=True)
-            return
+        try:
+            guild = inter.guild
+            if guild is None:
+                await inter.response.send_message("Kan kun bruges i en server.", ephemeral=True)
+                return
 
-        ch = await find_channel_by_name(guild, CHANNEL_NAME)
-        if ch is None:
-            await inter.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
-            return
+            ch = await find_channel_by_name(guild, CHANNEL_NAME)
+            if ch is None:
+                await inter.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
+                return
 
-        embed = build_embed(besked_txt)
-        view = VagtplanView(ROLE_DISP)
-        await ch.send(embed=embed, view=view)
-        await inter.response.send_message("Vagtplan sendt.", ephemeral=True)
+            embed = build_embed(besked_txt)
+            view = VagtplanView(ROLE_DISP)
+            await ch.send(embed=embed, view=view)
+            await inter.response.send_message("✅ Vagtplan sendt korrekt!", ephemeral=True)
 
-    await interaction.response.send_modal(BeskedModal(after_modal))
+        except Exception as e:
+            await inter.response.send_message(f"⚠️ Der opstod en fejl: `{e}`", ephemeral=True)
 
+    # Åbn modal efter defer
+    await interaction.followup.send_modal(BeskedModal(after_modal))
 
 # -------------------- Daglig auto-post kl. 12:00 --------------------
 @tasks.loop(time=dt.time(hour=DAILY_H, minute=DAILY_M, tzinfo=TZ))
@@ -229,20 +234,22 @@ async def daily_post():
 # -------------------- Lifecycle --------------------
 @bot.event
 async def on_ready():
-    print(f"Logget ind som {bot.user}")
+    print(f"✅ Logget ind som {bot.user} (ID: {bot.user.id})")
     try:
         ensure_sheets()
-        print("Google Sheets klar.")
+        print("✅ Google Sheets klar.")
     except Exception as e:
-        print("Fejl ved Sheets-init:", e)
+        print(f"❌ Fejl ved Sheets-init: {e}")
+
     try:
-        await tree.sync()
-        print("Slash-kommandoer synkroniseret.")
+        synced = await tree.sync()
+        print(f"✅ Slash-kommandoer synkroniseret ({len(synced)} kommandoer).")
     except Exception as e:
-        print("Fejl ved sync:", e)
+        print(f"❌ Fejl ved sync: {e}")
+
     if not daily_post.is_running():
         daily_post.start()
-
+        print("🕛 Daglig auto-post startet.")
 
 # -------------------- Start --------------------
 if __name__ == "__main__":
@@ -503,5 +510,6 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
