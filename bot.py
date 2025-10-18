@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Planday | Vagtplan – SOSDAH - ZodiacRP
-# Dansk version med modal (besked + starttid), auto-post kl. 12, to kolonner, uden Sheets
+# Dansk version med starttid, besked, billede og auto-post kl. 12
 
 import os
 import datetime as dt
@@ -39,7 +39,7 @@ def get_msg_data(msg_id):
     return registreringer[msg_id]
 
 # -------------------- Embed opsætning --------------------
-def build_embed(starttid: str, besked: str | None = None, data=None):
+def build_embed(starttid: str, besked: str | None = None, img_url: str | None = None, data=None):
     today = dt.datetime.now(TZ).date()
     embed = discord.Embed(
         title=f"Dagens vagtplan for {dansk_dato(today)}",
@@ -61,14 +61,20 @@ def build_embed(starttid: str, besked: str | None = None, data=None):
 
     embed.add_field(name="🗒️ Besked", value=besked if besked else "Ingen besked sat", inline=False)
     embed.set_footer(text="Planday | Vagtplan")
+
+    # Hvis der er et billede
+    if img_url and img_url.startswith("http"):
+        embed.set_image(url=img_url)
+
     return embed
 
 # -------------------- Knapper --------------------
 class VagtplanView(discord.ui.View):
-    def __init__(self, starttid, besked=None):
+    def __init__(self, starttid, besked=None, img_url=None):
         super().__init__(timeout=None)
         self.starttid = starttid
         self.besked = besked
+        self.img_url = img_url
 
     async def update_status(self, interaction: discord.Interaction, kategori: str):
         msg_id = interaction.message.id
@@ -82,7 +88,7 @@ class VagtplanView(discord.ui.View):
         if kategori:
             data[kategori].append(user_mention)
 
-        embed = build_embed(self.starttid, self.besked, data)
+        embed = build_embed(self.starttid, self.besked, self.img_url, data)
         await interaction.message.edit(embed=embed, view=self)
         await interaction.response.send_message(f"✅ Registreret som **{kategori}**", ephemeral=True)
 
@@ -111,7 +117,7 @@ class VagtplanView(discord.ui.View):
             data["disp"].remove(mention)
         else:
             data["disp"].append(mention)
-        embed = build_embed(self.starttid, self.besked, data)
+        embed = build_embed(self.starttid, self.besked, self.img_url, data)
         await interaction.message.edit(embed=embed, view=self)
         await interaction.response.send_message("🧭 Vagtplan opdateret ✅", ephemeral=True)
 
@@ -129,19 +135,25 @@ class BeskedModal(discord.ui.Modal, title="Opret dagens vagtplan"):
         required=False,
         max_length=300
     )
+    billede = discord.ui.TextInput(
+        label="Link til billede (valgfrit)",
+        placeholder="Indsæt link til et billede (fx https://i.imgur.com/...png)",
+        required=False,
+        max_length=400
+    )
 
     def __init__(self, cb):
         super().__init__()
         self._cb = cb
 
     async def on_submit(self, interaction: discord.Interaction):
-        await self._cb(interaction, str(self.starttid), str(self.besked))
+        await self._cb(interaction, str(self.starttid), str(self.besked), str(self.billede))
 
 # -------------------- Slash-kommando --------------------
-@tree.command(name="vagtplan", description="Send dagens vagtplan med starttid og besked")
+@tree.command(name="vagtplan", description="Send dagens vagtplan med starttid, besked og billede")
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan_cmd(interaction: discord.Interaction):
-    async def after_modal(inter: discord.Interaction, starttid: str, besked: str | None):
+    async def after_modal(inter: discord.Interaction, starttid: str, besked: str | None, billede: str | None):
         guild = inter.guild
         if guild is None:
             await inter.response.send_message("Kan kun bruges i en server.", ephemeral=True)
@@ -157,8 +169,8 @@ async def vagtplan_cmd(interaction: discord.Interaction):
             if msg.author == bot.user:
                 await msg.delete()
 
-        embed = build_embed(starttid, besked, get_msg_data("ny"))
-        view = VagtplanView(starttid, besked)
+        embed = build_embed(starttid, besked, billede, get_msg_data("ny"))
+        view = VagtplanView(starttid, besked, billede)
         sent = await ch.send(embed=embed, view=view)
         get_msg_data(sent.id)
         await inter.response.send_message("✅ Vagtplan sendt.", ephemeral=True)
@@ -177,8 +189,9 @@ async def daily_post():
                     await msg.delete()
             besked = "Automatisk daglig vagtplan – god vagt i aften ☕"
             starttid = "19:30"
-            embed = build_embed(starttid, besked, {"deltager": [], "senere": [], "fravaer": [], "disp": []})
-            await ch.send(embed=embed, view=VagtplanView(starttid, besked))
+            img_url = None
+            embed = build_embed(starttid, besked, img_url, {"deltager": [], "senere": [], "fravaer": [], "disp": []})
+            await ch.send(embed=embed, view=VagtplanView(starttid, besked, img_url))
             print(f"[AUTO] Ny vagtplan sendt til {guild.name}")
 
 # -------------------- Start --------------------
@@ -448,6 +461,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
