@@ -1,167 +1,181 @@
 # -*- coding: utf-8 -*-
-# Planday | Vagtplan – version uden Google Sheets
-# Dansk tekst, live opdatering i embed, flere disponenter
+# Planday | Vagtplan – SOSDAH - ZodiacRP
+# Version uden Google Sheets
 
 import os
 import datetime as dt
 from zoneinfo import ZoneInfo
-
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import tasks
 
-# --------------- Konfiguration ---------------
-TOKEN = os.getenv("DISCORD_TOKEN")  # Sæt i Railway Variables
-CHANNEL_NAME = "vagtplan"
+# -------------------- Konfiguration --------------------
+TOKEN = os.getenv("DISCORD_TOKEN")
+ROLE_DISP = "Disponent"
+CHANNEL_NAME = "「📰」vagtplan"
 TZ = ZoneInfo("Europe/Copenhagen")
+
 START_H = 19
 START_M = 30
+DAILY_H = 12
+DAILY_M = 0
 
+# -------------------- Intents & Client --------------------
 intents = discord.Intents.default()
-intents.message_content = False
 intents.guilds = True
 intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
-
-# --------------- Hjælpere ---------------
+# -------------------- Dansk datoformat --------------------
 DAYS = ["mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag"]
 MONTHS = [
     "januar", "februar", "marts", "april", "maj", "juni",
     "juli", "august", "september", "oktober", "november", "december"
 ]
-
-
 def dansk_dato(d: dt.date) -> str:
     return f"{DAYS[d.weekday()]} den {d.day}. {MONTHS[d.month - 1]}"
 
+# -------------------- Gemte registreringer --------------------
+registreringer = {}
 
-# --------------- Embed generator ---------------
-def build_embed(besked=None):
+def get_msg_data(msg_id):
+    if msg_id not in registreringer:
+        registreringer[msg_id] = {"deltager": [], "senere": [], "fravaer": [], "disp": []}
+    return registreringer[msg_id]
+
+# -------------------- Byg embed --------------------
+def build_embed(besked=None, data=None):
     today = dt.datetime.now(TZ).date()
-    e = discord.Embed(
-        title=f"📅 Dagens vagtplan for {dansk_dato(today)}",
-        description="Server: SOSDAH - ZodiacRP",
-        colour=0x2b90d9,
-    )
-    e.add_field(name="🕓 Starttid", value=f"{dansk_dato(today)} kl. {START_H:02d}:{START_M:02d}", inline=False)
-    e.add_field(name="🧭 Disponering", value="Ingen endnu", inline=False)
-    e.add_field(name="✅ Deltager", value="Ingen endnu", inline=False)
-    e.add_field(name="🕓 Deltager senere", value="Ingen endnu", inline=False)
-    e.add_field(name="❌ Fraværende", value="Ingen endnu", inline=False)
-    e.add_field(name="🗒️ Besked", value=besked or "Ingen besked sat", inline=False)
-    e.set_footer(text="Planday | Vagtplan")
-    return e
+    title = f"Dagens vagtplan for {dansk_dato(today)}"
+    embed = discord.Embed(title=title, description="Server: SOSDAH - ZodiacRP", color=0x2b90d9)
+    embed.add_field(name="🕒 Starttid", value=f"{dansk_dato(today)} kl. {START_H:02d}:{START_M:02d}", inline=False)
 
+    deltager_str = "\n".join(data["deltager"]) if data and data["deltager"] else "Ingen endnu"
+    senere_str = "\n".join(data["senere"]) if data and data["senere"] else "Ingen endnu"
+    fravaer_str = "\n".join(data["fravaer"]) if data and data["fravaer"] else "Ingen endnu"
+    disp_str = "\n".join(data["disp"]) if data and data["disp"] else "Ingen endnu"
 
-# --------------- View med knapper ---------------
+    embed.add_field(name="✅ Deltager", value=deltager_str, inline=True)
+    embed.add_field(name="🕓 Deltager senere", value=senere_str, inline=True)
+    embed.add_field(name="❌ Fraværende", value=fravaer_str, inline=True)
+    embed.add_field(name="🧭 Disponering", value=disp_str, inline=True)
+
+    embed.add_field(name="🗒️ Besked", value=besked if besked else "Ingen besked sat", inline=False)
+    embed.set_footer(text="Planday | Vagtplan")
+    return embed
+
+# -------------------- View med knapper --------------------
 class VagtplanView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.responses = {"Disponering": [], "Deltager": [], "Deltager senere": [], "Fraværende": []}
+    def __init__(self, besked=None, *, timeout=None):
+        super().__init__(timeout=timeout)
+        self.besked = besked
 
-    def _update_list(self, name, user):
-        # Fjern bruger fra alle andre kategorier
-        for k in self.responses:
-            if user in self.responses[k] and k != name:
-                self.responses[k].remove(user)
-        # Tilføj til den valgte kategori
-        if user not in self.responses[name]:
-            self.responses[name].append(user)
+    async def update_status(self, interaction: discord.Interaction, kategori: str):
+        msg_id = interaction.message.id
+        user_mention = interaction.user.mention
+        data = get_msg_data(msg_id)
 
-    async def _refresh_embed(self, interaction: discord.Interaction):
-        msg = interaction.message
-        embed = msg.embeds[0]
+        # Fjern brugeren fra alle kategorier
+        for k in data.keys():
+            if user_mention in data[k]:
+                data[k].remove(user_mention)
 
-        for name, emoji in [("Disponering", "🧭"), ("Deltager", "✅"),
-                            ("Deltager senere", "🕓"), ("Fraværende", "❌")]:
-            users = self.responses[name]
-            val = ", ".join(u.mention for u in users) if users else "Ingen endnu"
-            for i, f in enumerate(embed.fields):
-                if f.name.startswith(emoji):
-                    embed.set_field_at(i, name=f.name, value=val, inline=False)
-        await msg.edit(embed=embed, view=self)
+        # Tilføj i valgt kategori
+        if kategori:
+            data[kategori].append(user_mention)
 
-    async def handle(self, interaction: discord.Interaction, category: str):
-        self._update_list(category, interaction.user)
-        await self._refresh_embed(interaction)
-        await interaction.response.send_message(
-            f"✅ Du er registreret som **{category}**.", ephemeral=True
-        )
+        # Opdater embed
+        embed = build_embed(self.besked, data)
+        await interaction.message.edit(embed=embed, view=self)
+        await interaction.response.send_message(f"Registreret som **{kategori}** ✅", ephemeral=True)
 
-    @discord.ui.button(label="✅ Deltager", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Deltager", style=discord.ButtonStyle.success, emoji="✅")
     async def deltager(self, interaction: discord.Interaction, _):
-        await self.handle(interaction, "Deltager")
+        await self.update_status(interaction, "deltager")
 
-    @discord.ui.button(label="🕓 Deltager senere", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Deltager senere", style=discord.ButtonStyle.primary, emoji="🕓")
     async def senere(self, interaction: discord.Interaction, _):
-        await self.handle(interaction, "Deltager senere")
+        await self.update_status(interaction, "senere")
 
-    @discord.ui.button(label="❌ Fraværende", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Fraværende", style=discord.ButtonStyle.danger, emoji="❌")
     async def fravaer(self, interaction: discord.Interaction, _):
-        await self.handle(interaction, "Fraværende")
+        await self.update_status(interaction, "fravaer")
 
-    @discord.ui.button(label="🧭 Disponent", style=discord.ButtonStyle.secondary)
-    async def disponering(self, interaction: discord.Interaction, _):
-        # Flere kan være disponenter
-        if interaction.user not in self.responses["Disponering"]:
-            self.responses["Disponering"].append(interaction.user)
-        await self._refresh_embed(interaction)
-        await interaction.response.send_message(
-            f"🧭 Du er tilføjet som **Disponent**.", ephemeral=True
-        )
-
-
-# --------------- Modal for besked ---------------
-class BeskedModal(discord.ui.Modal, title="Tilføj besked til vagtplan"):
-    besked = discord.ui.TextInput(label="Besked", style=discord.TextStyle.paragraph, required=False, max_length=500)
-
-    def __init__(self, cb):
-        super().__init__()
-        self._cb = cb
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self._cb(interaction, str(self.besked))
-
-
-# --------------- Slash-kommando ---------------
-@tree.command(name="vagtplan", description="Send dagens vagtplan i kanal med mulighed for besked")
-async def vagtplan_cmd(interaction: discord.Interaction):
-    async def after_modal(inter, besked_txt: str | None):
-        guild = inter.guild
-        if guild is None:
-            await inter.response.send_message("Kan kun bruges i en server.", ephemeral=True)
+    @discord.ui.button(label="Disponent", style=discord.ButtonStyle.secondary, emoji="🧭")
+    async def disponent(self, interaction: discord.Interaction, _):
+        member = interaction.user
+        if not any(r.name == ROLE_DISP for r in member.roles):
+            await interaction.response.send_message("Kun brugere med rollen **Disponent** kan bruge denne knap.", ephemeral=True)
             return
+        msg_id = interaction.message.id
+        data = get_msg_data(msg_id)
+        mention = interaction.user.mention
+        if mention in data["disp"]:
+            data["disp"].remove(mention)
+        else:
+            data["disp"].append(mention)
+        embed = build_embed(self.besked, data)
+        await interaction.message.edit(embed=embed, view=self)
+        await interaction.response.send_message("Disponent-status opdateret ✅", ephemeral=True)
+
+# -------------------- Slash-kommando --------------------
+@tree.command(name="vagtplan", description="Send dagens vagtplan i kanal")
+@app_commands.checks.has_role(ROLE_DISP)
+async def vagtplan(interaction: discord.Interaction):
+    def check_channel(guild):
+        return discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+
+    guild = interaction.guild
+    if not guild:
+        await interaction.response.send_message("Denne kommando skal bruges i en server.", ephemeral=True)
+        return
+
+    ch = check_channel(guild)
+    if not ch:
+        await interaction.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
+        return
+
+    await interaction.response.send_message("Skriv beskeden til vagtplanen i chatten (inden for 30 sekunder)...", ephemeral=True)
+
+    def check(m):
+        return m.author == interaction.user and m.channel == interaction.channel
+
+    try:
+        msg = await bot.wait_for("message", check=check, timeout=30)
+        besked = msg.content
+    except:
+        besked = None
+
+    embed = build_embed(besked, get_msg_data("ny"))
+    view = VagtplanView(besked)
+    sent = await ch.send(embed=embed, view=view)
+    get_msg_data(sent.id)  # init tom liste
+    await interaction.followup.send("Vagtplan sendt ✅", ephemeral=True)
+
+# -------------------- Auto-post kl. 12 --------------------
+@tasks.loop(time=dt.time(hour=DAILY_H, minute=DAILY_M, tzinfo=TZ))
+async def daily_post():
+    await bot.wait_until_ready()
+    for guild in bot.guilds:
         ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-        if not ch:
-            await inter.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
-            return
-        embed = build_embed(besked_txt)
-        view = VagtplanView()
-        await ch.send(embed=embed, view=view)
-        await inter.response.send_message("✅ Vagtplan sendt.", ephemeral=True)
+        if ch:
+            embed = build_embed("Automatisk daglig post", get_msg_data("auto"))
+            await ch.send(embed=embed, view=VagtplanView("Automatisk daglig post"))
 
-    await interaction.response.send_modal(BeskedModal(after_modal))
-
-
-# --------------- Lifecycle ---------------
+# -------------------- Start --------------------
 @bot.event
 async def on_ready():
     print(f"✅ Logget ind som {bot.user}")
     try:
         await tree.sync()
-        print("✅ Slash-kommandoer synkroniseret.")
+        print("Slash-kommandoer synkroniseret.")
     except Exception as e:
         print("Fejl ved sync:", e)
+    if not daily_post.is_running():
+        daily_post.start()
 
-
-# --------------- Start botten ---------------
-if __name__ == "__main__":
-    if not TOKEN:
-        raise RuntimeError("Sæt DISCORD_TOKEN som miljøvariabel i Railway → Variables.")
-    bot.run(TOKEN)
-
+bot.run(TOKEN)
 
 # -------------------- Info-kommando med flotte embeds i DM --------------------
 from discord import ui, Interaction, Embed, Color
@@ -415,6 +429,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
