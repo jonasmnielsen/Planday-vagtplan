@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 
+class BeskedModal(discord.ui.Modal, title="Tilføj besked til vagtplan"):
+    besked = discord.ui.TextInput(label="Besked", style=discord.TextStyle.paragraph, required=False, max_length=500)
 
-async def on_submit(self, interaction: discord.Interaction):
-await self._cb(interaction, str(self.besked))
+    def __init__(self, cb):
+        super().__init__()
+        self._cb = cb
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self._cb(interaction, str(self.besked))
+
+
 
 
 # -------------------- Kommandoer --------------------
@@ -74,3 +82,4 @@ token = os.getenv("DISCORD_TOKEN")
 if not token:
 raise RuntimeError("Sæt DISCORD_TOKEN som miljøvariabel i Railway → Variables.")
 bot.run(token)
+
