@@ -190,11 +190,11 @@ class BeskedModal(discord.ui.Modal, title="Tilføj besked til vagtplan"):
         await self._cb(interaction, str(self.besked))
 
 # -------------------- Kommandoer --------------------
+# -------------------- Kommandoer --------------------
 @tree.command(name="vagtplan", description="Send dagens vagtplan i kanal med mulighed for besked")
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan_cmd(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True, thinking=True)  # Forhindrer timeout
-
+    # Åbn modal direkte — ikke defer
     async def after_modal(inter: discord.Interaction, besked_txt: str | None):
         try:
             guild = inter.guild
@@ -213,10 +213,13 @@ async def vagtplan_cmd(interaction: discord.Interaction):
             await inter.response.send_message("✅ Vagtplan sendt korrekt!", ephemeral=True)
 
         except Exception as e:
-            await inter.response.send_message(f"⚠️ Der opstod en fejl: `{e}`", ephemeral=True)
+            try:
+                await inter.response.send_message(f"⚠️ Der opstod en fejl: `{e}`", ephemeral=True)
+            except:
+                pass
 
-    # Åbn modal efter defer
-    await interaction.followup.send_modal(BeskedModal(after_modal))
+    # Send modal korrekt
+    await interaction.response.send_modal(BeskedModal(after_modal))
 
 # -------------------- Daglig auto-post kl. 12:00 --------------------
 @tasks.loop(time=dt.time(hour=DAILY_H, minute=DAILY_M, tzinfo=TZ))
@@ -510,6 +513,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
