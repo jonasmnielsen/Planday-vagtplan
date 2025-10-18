@@ -117,7 +117,7 @@ class VagtplanView(discord.ui.View):
             data["disp"].append(mention)
         embed = build_embed(self.besked, data)
         await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message("Disponent-status opdateret ✅", ephemeral=True)
+        await interaction.response.send_message("Vagtplan opdateret ✅", ephemeral=True)
 
 # -------------------- Slash-kommando --------------------
 @tree.command(name="vagtplan", description="Send dagens vagtplan i kanal")
@@ -142,7 +142,7 @@ async def vagtplan(interaction: discord.Interaction):
         return m.author == interaction.user and m.channel == interaction.channel
 
     try:
-        msg = await bot.wait_for("message", check=check, timeout=30)
+        msg = await bot.wait_for("message", check=check, timeout=10)
         besked = msg.content
     except:
         besked = None
@@ -429,6 +429,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
