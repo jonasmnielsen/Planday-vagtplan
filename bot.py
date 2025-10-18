@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Planday | Vagtplan – SOSDAH - ZodiacRP
-# Version uden Google Sheets
+# Version uden Google Sheets + Auto-post kl. 12:00
 
 import os
 import datetime as dt
@@ -56,6 +56,7 @@ def build_embed(besked=None, data=None):
     fravaer_str = "\n".join(data["fravaer"]) if data and data["fravaer"] else "Ingen endnu"
     disp_str = "\n".join(data["disp"]) if data and data["disp"] else "Ingen endnu"
 
+    # To kolonner
     embed.add_field(name="✅ Deltager", value=deltager_str, inline=True)
     embed.add_field(name="🕓 Deltager senere", value=senere_str, inline=True)
     embed.add_field(name="❌ Fraværende", value=fravaer_str, inline=True)
@@ -123,20 +124,17 @@ class VagtplanView(discord.ui.View):
 @tree.command(name="vagtplan", description="Send dagens vagtplan i kanal")
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan(interaction: discord.Interaction):
-    def check_channel(guild):
-        return discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-
     guild = interaction.guild
     if not guild:
         await interaction.response.send_message("Denne kommando skal bruges i en server.", ephemeral=True)
         return
 
-    ch = check_channel(guild)
+    ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
     if not ch:
         await interaction.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
         return
 
-    await interaction.response.send_message("Skriv beskeden til vagtplanen i chatten (inden for 30 sekunder)...", ephemeral=True)
+    await interaction.response.send_message("Skriv beskeden til vagtplanen i chatten (inden for 10 sekunder)...", ephemeral=True)
 
     def check(m):
         return m.author == interaction.user and m.channel == interaction.channel
@@ -150,32 +148,14 @@ async def vagtplan(interaction: discord.Interaction):
     embed = build_embed(besked, get_msg_data("ny"))
     view = VagtplanView(besked)
     sent = await ch.send(embed=embed, view=view)
-    get_msg_data(sent.id)  # init tom liste
+    get_msg_data(sent.id)
     await interaction.followup.send("Vagtplan sendt ✅", ephemeral=True)
 
 # -------------------- Auto-post kl. 12 --------------------
 @tasks.loop(time=dt.time(hour=DAILY_H, minute=DAILY_M, tzinfo=TZ))
 async def daily_post():
-    await bot.wait_until_ready()
-    for guild in bot.guilds:
-        ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-        if ch:
-            embed = build_embed("Automatisk daglig post", get_msg_data("auto"))
-            await ch.send(embed=embed, view=VagtplanView("Automatisk daglig post"))
+    await
 
-# -------------------- Start --------------------
-@bot.event
-async def on_ready():
-    print(f"✅ Logget ind som {bot.user}")
-    try:
-        await tree.sync()
-        print("Slash-kommandoer synkroniseret.")
-    except Exception as e:
-        print("Fejl ved sync:", e)
-    if not daily_post.is_running():
-        daily_post.start()
-
-bot.run(TOKEN)
 
 # -------------------- Info-kommando med flotte embeds i DM --------------------
 from discord import ui, Interaction, Embed, Color
@@ -429,6 +409,7 @@ async def info_cmd(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     await interaction.response.send_message(embed=embed, view=InfoButtons())
+
 
 
 
