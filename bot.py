@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Planday | Vagtplan – SOSDAH - ZodiacRP
-# Dansk version med starttid, besked, billede og auto-post kl. 12
+# Dansk version med starttid, besked, billede, auto-post kl. 12 og auto-slet kl. 00:00 med @everyone-tag
 
 import os
 import datetime as dt
@@ -43,7 +43,7 @@ def build_embed(starttid: str, besked: str | None = None, img_url: str | None = 
     today = dt.datetime.now(TZ).date()
     embed = discord.Embed(
         title=f"Dagens vagtplan for {dansk_dato(today)}",
-        description="@everyone",
+        description="Server: SOSDAH - ZodiacRP",
         color=0x2b90d9
     )
 
@@ -62,7 +62,6 @@ def build_embed(starttid: str, besked: str | None = None, img_url: str | None = 
     embed.add_field(name="🗒️ Besked", value=besked if besked else "Ingen besked sat", inline=False)
     embed.set_footer(text="Planday | Vagtplan")
 
-    # Hvis der er et billede
     if img_url and img_url.startswith("http"):
         embed.set_image(url=img_url)
 
@@ -81,7 +80,6 @@ class VagtplanView(discord.ui.View):
         user_mention = interaction.user.mention
         data = get_msg_data(msg_id)
 
-        # Fjern bruger fra alle kategorier
         for k in data.keys():
             if user_mention in data[k]:
                 data[k].remove(user_mention)
@@ -171,9 +169,9 @@ async def vagtplan_cmd(interaction: discord.Interaction):
 
         embed = build_embed(starttid, besked, billede, get_msg_data("ny"))
         view = VagtplanView(starttid, besked, billede)
-        sent = await ch.send(embed=embed, view=view)
+        sent = await ch.send(content="@everyone", embed=embed, view=view)
         get_msg_data(sent.id)
-        await inter.response.send_message("✅ Vagtplan sendt.", ephemeral=True)
+        await inter.response.send_message("✅ Vagtplan sendt med @everyone.", ephemeral=True)
 
     await interaction.response.send_modal(BeskedModal(after_modal))
 
@@ -191,8 +189,20 @@ async def daily_post():
             starttid = "19:30"
             img_url = None
             embed = build_embed(starttid, besked, img_url, {"deltager": [], "senere": [], "fravaer": [], "disp": []})
-            await ch.send(embed=embed, view=VagtplanView(starttid, besked, img_url))
-            print(f"[AUTO] Ny vagtplan sendt til {guild.name}")
+            await ch.send(content="@everyone", embed=embed, view=VagtplanView(starttid, besked, img_url))
+            print(f"[AUTO] Ny vagtplan sendt til {guild.name} med @everyone")
+
+# -------------------- Auto-slet ved midnat --------------------
+@tasks.loop(time=dt.time(hour=0, minute=0, tzinfo=TZ))
+async def midnight_cleanup():
+    await bot.wait_until_ready()
+    for guild in bot.guilds:
+        ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+        if ch:
+            async for msg in ch.history(limit=50):
+                if msg.author == bot.user:
+                    await msg.delete()
+            print(f"[AUTO] Vagtplan slettet ved midnat i {guild.name}")
 
 # -------------------- Start --------------------
 @bot.event
@@ -206,6 +216,8 @@ async def on_ready():
     if not daily_post.is_running():
         daily_post.start()
         print("📅 Automatisk daglig post aktiveret (kl. 12:00)")
+    if not midnight_cleanup.is_running():
+        midnight_cleanup.start()
+        print("🕛 Automatisk sletning ved midnat aktiveret")
 
 bot.run(TOKEN)
-
