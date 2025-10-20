@@ -43,7 +43,7 @@ def build_embed(starttid: str, besked: str | None = None, img_url: str | None = 
     today = dt.datetime.now(TZ).date()
     embed = discord.Embed(
         title=f"Dagens vagtplan for {dansk_dato(today)}",
-        description="Server: SOSDAH - ZodiacRP",
+        description="Er man forsinket eller kommer senere informer man DC, hvis der er angivet en",
         color=0x2b90d9
     )
 
@@ -221,4 +221,5 @@ async def on_ready():
         print("🕛 Automatisk sletning ved midnat aktiveret")
 
 bot.run(TOKEN)
+
 
