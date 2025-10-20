@@ -12,7 +12,7 @@ from discord.ext import tasks
 # -------------------- Konfiguration --------------------
 TOKEN = os.getenv("DISCORD_TOKEN")
 ROLE_DISP = "Disponent"
-CHANNEL_NAME = "vagtplan"
+CHANNEL_NAME = "🗓️┃planday-dagens-vagtplan"
 TZ = ZoneInfo("Europe/Copenhagen")
 DAILY_H = 12
 DAILY_M = 0
@@ -221,3 +221,4 @@ async def on_ready():
         print("🕛 Automatisk sletning ved midnat aktiveret")
 
 bot.run(TOKEN)
+
