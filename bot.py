@@ -43,7 +43,7 @@ def build_embed(starttid: str, besked: str | None = None, img_url: str | None = 
     today = dt.datetime.now(TZ).date()
     embed = discord.Embed(
         title=f"Dagens vagtplan for {dansk_dato(today)}",
-        description="Er man forsinket eller kommer senere informer man DC, hvis der er angivet en",
+        description="Husk og stemple ind hvad bil du kører i.",
         color=0x2b90d9
     )
 
@@ -106,7 +106,7 @@ class VagtplanView(discord.ui.View):
     async def disponent(self, interaction: discord.Interaction, _):
         member = interaction.user
         if not any(r.name == ROLE_DISP for r in member.roles):
-            await interaction.response.send_message("Kun brugere med rollen **Disponent** kan bruge denne knap.", ephemeral=True)
+            await interaction.response.send_message("Kun **Disponent** kan bruge denne knap.", ephemeral=True)
             return
         msg_id = interaction.message.id
         data = get_msg_data(msg_id)
@@ -221,5 +221,6 @@ async def on_ready():
         print("🕛 Automatisk sletning ved midnat aktiveret")
 
 bot.run(TOKEN)
+
 
 
