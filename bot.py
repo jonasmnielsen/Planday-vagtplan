@@ -242,7 +242,7 @@ class BeskedModal(discord.ui.Modal, title="Opret dagens vagtplan"):
         await self._cb(interaction, str(self.starttid), str(self.besked), str(self.billede))
 
 # -------------------- Slash-kommando: manuel vagtplan --------------------
-@tree.command(name="vagtplan", description="Send dagens vagtplan med starttid, besked og billede")
+@tree.command(name="vagtplan", description="Send dagens vagtplan med starttid, besked og billede", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan_cmd(interaction: discord.Interaction):
     if not state.get("enabled", True):
@@ -290,7 +290,7 @@ def offline_text(who: str, since_iso: str) -> str:
     )
 
 # -------------------- Slash-kommandoer: /aktiver & /deaktiver --------------------
-@tree.command(name="deaktiver", description="Deaktiver automatisk Planday-udsendelse og vis status med live ur")
+@tree.command(name="deaktiver", description="Deaktiver automatisk Planday-udsendelse og vis status med live ur", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def deaktiver_cmd(interaction: discord.Interaction):
     if not state.get("enabled", True):
@@ -317,7 +317,7 @@ async def deaktiver_cmd(interaction: discord.Interaction):
 
     await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
 
-@tree.command(name="aktiver", description="Aktiver automatisk Planday-udsendelse, stop live ur og vis samlet nedetid")
+@tree.command(name="aktiver", description="Aktiver automatisk Planday-udsendelse, stop live ur og vis samlet nedetid", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def aktiver_cmd(interaction: discord.Interaction):
     if state.get("enabled", True):
@@ -440,7 +440,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         pass
 
 # Simpel ping-kommando til test
-@tree.command(name="ping", description="Test at botten svarer")
+@tree.command(name="ping", description="Test at botten svarer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!", ephemeral=True)
 
@@ -478,5 +478,4 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
-
 
