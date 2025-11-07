@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
-# Planday | Vagtplan – SOSDAH - ZodiacRP
-# Dansk version med starttid, besked, billede, auto-post kl. 12 og auto-slet kl. 00:00 med @everyone-tag
+# Planday | Vagtplan – SOSDAH - ZodiacRP (med /aktiver & /deaktiver + live nedetidsur)
+# Dansk version med starttid, besked, billede, auto-post kl. 12 og auto-slet kl. 00:00
+# + Toggle-kommandoer til at aktivere/deaktivere automatisk udsendelse og statusbesked med live ur,
+#   som viser hvor længe systemet har været deaktiveret. Uret opdateres løbende mens det er deaktiveret,
+#   og ved aktivering vises den samlede nedetid.
 
 import os
+import json
 import datetime as dt
 from zoneinfo import ZoneInfo
 import discord
@@ -17,6 +21,8 @@ TZ = ZoneInfo("Europe/Copenhagen")
 DAILY_H = 12
 DAILY_M = 0
 
+STATE_FILE = "planday_state.json"  # persisterer aktiveret/deaktiveret, sidste statusbesked-id, og nedetidsstart pr. guild
+
 # -------------------- Intents & Client --------------------
 intents = discord.Intents.default()
 intents.guilds = True
@@ -24,9 +30,95 @@ intents.members = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
+# -------------------- State --------------------
+# Struktur:
+# {
+#   "enabled": true/false,
+#   "last_notice": { guild_id(str): message_id(int) },
+#   "disabled_since": { guild_id(str): iso_timestamp(str) },
+# }
+
+def _default_state():
+    return {"enabled": True, "last_notice": {}, "disabled_since": {}}
+
+def load_state():
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, dict):
+                return _default_state()
+            data.setdefault("enabled", True)
+            data.setdefault("last_notice", {})
+            data.setdefault("disabled_since", {})
+            return data
+    except Exception:
+        return _default_state()
+
+def save_state():
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("Kunne ikke gemme state:", e)
+
+state = load_state()
+
+# -------------------- Hjælpere --------------------
+
+def format_duration(delta: dt.timedelta) -> str:
+    total = int(delta.total_seconds())
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    seconds = total % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+async def post_status_message(guild: discord.Guild, content: str) -> int | None:
+    ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+    if not ch:
+        return None
+    msg = await ch.send(content=content)
+    return msg.id
+
+async def edit_status_message(guild: discord.Guild, message_id: int, new_content: str):
+    ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+    if not ch:
+        return
+    try:
+        m = await ch.fetch_message(message_id)
+    except Exception:
+        m = None
+    if m:
+        try:
+            await m.edit(content=new_content)
+        except Exception:
+            pass
+
+async def delete_status_message_if_any(guild: discord.Guild):
+    try:
+        gid = str(guild.id)
+        last_id = state.get("last_notice", {}).get(gid)
+        if not last_id:
+            return
+        ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+        if not ch:
+            return
+        try:
+            m = await ch.fetch_message(last_id)
+        except Exception:
+            m = None
+        if m:
+            await m.delete()
+        # ryd referencer
+        state["last_notice"].pop(gid, None)
+        state["disabled_since"].pop(gid, None)
+        save_state()
+    except Exception as e:
+        print("Fejl ved sletning af statusbesked:", e)
+
 # -------------------- Dansk datoformat --------------------
 DAYS = ["mandag","tirsdag","onsdag","torsdag","fredag","lørdag","søndag"]
 MONTHS = ["januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"]
+
 def dansk_dato(d: dt.date) -> str:
     return f"{DAYS[d.weekday()]} den {d.day}. {MONTHS[d.month - 1]}"
 
@@ -147,10 +239,14 @@ class BeskedModal(discord.ui.Modal, title="Opret dagens vagtplan"):
     async def on_submit(self, interaction: discord.Interaction):
         await self._cb(interaction, str(self.starttid), str(self.besked), str(self.billede))
 
-# -------------------- Slash-kommando --------------------
+# -------------------- Slash-kommando: manuel vagtplan --------------------
 @tree.command(name="vagtplan", description="Send dagens vagtplan med starttid, besked og billede")
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan_cmd(interaction: discord.Interaction):
+    if not state.get("enabled", True):
+        await interaction.response.send_message("⛔ Planday er deaktiveret – aktiver først med /aktiver.", ephemeral=True)
+        return
+
     async def after_modal(inter: discord.Interaction, starttid: str, besked: str | None, billede: str | None):
         guild = inter.guild
         if guild is None:
@@ -162,7 +258,6 @@ async def vagtplan_cmd(interaction: discord.Interaction):
             await inter.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
             return
 
-        # Slet gamle vagtplaner
         async for msg in ch.history(limit=10):
             if msg.author == bot.user:
                 await msg.delete()
@@ -175,10 +270,129 @@ async def vagtplan_cmd(interaction: discord.Interaction):
 
     await interaction.response.send_modal(BeskedModal(after_modal))
 
+# -------------------- Status-tekster --------------------
+
+def offline_text(who: str, since_iso: str) -> str:
+    try:
+        since = dt.datetime.fromisoformat(since_iso)
+    except Exception:
+        since = dt.datetime.now(TZ)
+    now = dt.datetime.now(TZ)
+    elapsed = format_duration(now - since)
+    stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
+    return (
+        f":no_entry: **Planday er ikke tilgængelig lige nu**\n"
+        f"Blev deaktiveret af {who} **{stamp}**.\n"
+        f"⏱️ **Nedetid (live): {elapsed}**\n"
+        f"Systemet sender ikke automatisk beskeder, før det aktiveres igen."
+    )
+
+# -------------------- Slash-kommandoer: /aktiver & /deaktiver --------------------
+@tree.command(name="deaktiver", description="Deaktiver automatisk Planday-udsendelse og vis status med live ur")
+@app_commands.checks.has_role(ROLE_DISP)
+async def deaktiver_cmd(interaction: discord.Interaction):
+    if not state.get("enabled", True):
+        await interaction.response.send_message("Planday er allerede deaktiveret.", ephemeral=True)
+        return
+
+    state["enabled"] = False
+    gid = str(interaction.guild.id) if interaction.guild else None
+    since_iso = dt.datetime.now(TZ).isoformat()
+    if gid:
+        state.setdefault("disabled_since", {})[gid] = since_iso
+    save_state()
+
+    guild = interaction.guild
+    who = interaction.user.mention
+    if guild:
+        text = offline_text(who, since_iso)
+        msg_id = await post_status_message(guild, text)
+        if msg_id:
+            state.setdefault("last_notice", {})[gid] = msg_id
+            save_state()
+            if not downtime_updater.is_running():
+                downtime_updater.start()
+
+    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
+
+@tree.command(name="aktiver", description="Aktiver automatisk Planday-udsendelse, stop live ur og vis samlet nedetid")
+@app_commands.checks.has_role(ROLE_DISP)
+async def aktiver_cmd(interaction: discord.Interaction):
+    if state.get("enabled", True):
+        await interaction.response.send_message("Planday er allerede aktiveret.", ephemeral=True)
+        return
+
+    state["enabled"] = True
+    gid = str(interaction.guild.id) if interaction.guild else None
+
+    total_text = ""
+    if gid and gid in state.get("disabled_since", {}):
+        try:
+            since = dt.datetime.fromisoformat(state["disabled_since"][gid])
+        except Exception:
+            since = dt.datetime.now(TZ)
+        now = dt.datetime.now(TZ)
+        total_text = format_duration(now - since)
+
+    # ryd statusbesked og disabled_since
+    if interaction.guild:
+        await delete_status_message_if_any(interaction.guild)
+
+    save_state()
+
+    who = interaction.user.mention
+    if interaction.guild:
+        ok_text = (
+            f":white_check_mark: Planday er **aktiveret igen** af {who}. "
+            f"Nedetid i alt: **{total_text or '00:00:00'}**."
+        )
+        await post_status_message(interaction.guild, ok_text)
+
+    await interaction.response.send_message("🟢 Planday er **aktiveret** igen.", ephemeral=True)
+
+# -------------------- Live nedetids-opdatering (kører mens deaktiveret) --------------------
+@tasks.loop(seconds=30)
+async def downtime_updater():
+    # Opdater hver 30. sekund alle kendte statusbeskeder med nyt ur
+    try:
+        for guild in bot.guilds:
+            gid = str(guild.id)
+            msg_id = state.get("last_notice", {}).get(gid)
+            since_iso = state.get("disabled_since", {}).get(gid)
+            if not msg_id or not since_iso:
+                continue
+            # Construct fresh content
+            # Bemærk: vi bevarer "deaktiveret af"-brugeren ved at hente seneste kendte besked og parse er upraktisk,
+            # så vi gemmer ikke navnet separat. I praksis vil tekst stadig give mening.
+            # For fuld præcision kan man udvide state til også at gemme "disabled_by" pr. guild.
+            # Her forsøger vi at læse forrige besked for at bevare navnet hvis muligt.
+            who = "en disponent"
+            try:
+                ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+                if ch:
+                    m = await ch.fetch_message(msg_id)
+                    if m and m.content:
+                        # Prøv at hive mention ud mellem "af " og næste linjeskift
+                        content = m.content
+                        marker = "Blev deaktiveret af "
+                        if marker in content:
+                            rest = content.split(marker, 1)[1]
+                            who = rest.split("\n", 1)[0]
+            except Exception:
+                pass
+
+            new_text = offline_text(who, since_iso)
+            await edit_status_message(guild, msg_id, new_text)
+    except Exception as e:
+        print("[downtime_updater] fejl:", e)
+
 # -------------------- Auto-post hver dag kl. 12 --------------------
 @tasks.loop(time=dt.time(hour=DAILY_H, minute=DAILY_M, tzinfo=TZ))
 async def daily_post():
     await bot.wait_until_ready()
+    if not state.get("enabled", True):
+        print("[AUTO] Skippet (deaktiveret)")
+        return
     for guild in bot.guilds:
         ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
         if ch:
@@ -219,8 +433,13 @@ async def on_ready():
     if not midnight_cleanup.is_running():
         midnight_cleanup.start()
         print("🕛 Automatisk sletning ved midnat aktiveret")
+    # Hvis der var en aktiv deaktivering før bot-restart, genstart live-uret
+    has_any_down = bool(state.get("disabled_since")) and bool(state.get("last_notice"))
+    if has_any_down and not downtime_updater.is_running():
+        downtime_updater.start()
+        print("⏱️ Live nedetids-ur genoptaget")
 
-bot.run(TOKEN)
-
-
-
+if __name__ == "__main__":
+    if not TOKEN:
+        raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
+    bot.run(TOKEN)
