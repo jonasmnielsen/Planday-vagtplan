@@ -298,9 +298,12 @@ def offline_text(who: str, since_iso: str) -> str:
     elapsed = format_duration(now - since)
     stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
     return (
-        ":no_entry: **Planday er ikke tilgængelig lige nu**\n"
-        f"Blev deaktiveret af {who} — **{stamp}**\n"
-        f"🕒 **Nedetid (live): {elapsed}**\n"
+        ":no_entry: **Planday er ikke tilgængelig lige nu**
+"
+        f"Blev deaktiveret af {who} — **{stamp}**
+"
+        f"🕒 **Nedetid (live): {elapsed}**
+"
         "Systemet sender ikke automatisk beskeder, før det aktiveres igen."
     )
     except Exception:
@@ -342,7 +345,7 @@ async def deaktiver_cmd(interaction: discord.Interaction):
             if not downtime_updater.is_running():
                 downtime_updater.start()
 
-    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True), ephemeral=True)
+    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
 
 @tree.command(name="aktiver", description="Aktiver automatisk Planday-udsendelse, stop live ur og vis samlet nedetid", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
@@ -508,5 +511,6 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
+
 
 
