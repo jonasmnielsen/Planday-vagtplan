@@ -18,7 +18,14 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 ROLE_DISP = "Disponent"
 CHANNEL_NAME = "🗓️┃planday-dagens-vagtplan"
 # (Valgfrit) Sæt dit server-ID for at få slash-kommandoer med det samme
-GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0")) or None
+def _parse_guild_id():
+    raw = os.getenv("DISCORD_GUILD_ID", "").strip()
+    try:
+        return int(raw) if raw.isdigit() else None
+    except Exception:
+        return None
+
+GUILD_ID = _parse_guild_id()
 TZ = ZoneInfo("Europe/Copenhagen")
 DAILY_H = 12
 DAILY_M = 0
@@ -455,22 +462,34 @@ async def sync_cmd(interaction: discord.Interaction):
     names = ", ".join(c.name for c in cmds)
     await interaction.response.send_message(f"Synkroniseret. Kommandoer: {names}", ephemeral=True)
 
+# Ryd globale kommandoer (kun Disponent) – fjerner dubletter i menuen
+@tree.command(name="cleanup_global", description="Fjern gamle globale slash-kommandoer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def cleanup_global_cmd(interaction: discord.Interaction):
+    # Fjerner globale commands fra denne applikation
+    tree.clear_commands(guild=None)
+    await tree.sync()  # push tom global liste
+    await interaction.response.send_message("Globale kommandoer ryddet. Dubletter burde forsvinde inden for få sekunder.", ephemeral=True)
+
 # -------------------- Start --------------------
 @bot.event
 async def on_ready():
     print(f"✅ Logget ind som {bot.user}")
     try:
         if GUILD_ID:
-            guild_obj = discord.Object(id=GUILD_ID)
-            # Sync KUN til den angivne guild for instant-tilgængelighed
-            await tree.sync(guild=guild_obj)
-            cmds = await tree.fetch_commands(guild=guild_obj)
-            print("Guild-commands:", [c.name for c in cmds])
-        else:
-            # Hvis ingen GUILD_ID, sync globalt (kan være langsomt første gang)
-            await tree.sync()
-            gcmds = await tree.fetch_commands()
-            print("Global-commands:", [c.name for c in gcmds])
+        guild_obj = discord.Object(id=GUILD_ID)
+        # 1) Sørg for, at der ikke er globale (for at undgå dubletter)
+        tree.clear_commands(guild=None)
+        await tree.sync()  # tøm globalt
+        # 2) Sync kun til den angivne guild
+        await tree.sync(guild=guild_obj)
+        cmds = await tree.fetch_commands(guild=guild_obj)
+        print("Guild-commands:", [c.name for c in cmds])
+    else:
+        # Ingen GUILD_ID: brug global sync (kan tage tid første gang)
+        await tree.sync()
+        gcmds = await tree.fetch_commands()
+        print("Global-commands:", [c.name for c in gcmds])
     except Exception as e:
         print("Fejl ved sync:", e)
     if not daily_post.is_running():
@@ -494,4 +513,3 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
-
