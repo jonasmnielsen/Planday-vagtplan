@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 # Planday | Vagtplan – SOSDAH - ZodiacRP
-# /deaktiver -> Modal (Besked), slår auto fra, poster status-EMBED m. live-ur, rydder kanalen (beholder status)
-# /aktiver   -> Modal (Besked), slår auto til, poster info-EMBED, rydder kanalen (beholder info)
-# Auto vagtplan kl. 12, oprydning ved midnat (respekterer on/off)
-# State i planday_state.json
-# Guild-sync for instant slash-commands (brug DISCORD_GUILD_ID)
+# /admin -> Modal (Besked), derefter knapper (Aktiver/Deaktiver).
+# Aktiver/Deaktiver: rydder kanal (beholder kun status/aktiverings-embed), live nedetidsur, auto vagtplan kl. 12, nightly cleanup.
+# State i planday_state.json. Kræver rollen "Disponent".
 
 import os
 import json
 import datetime as dt
 from zoneinfo import ZoneInfo
-from typing import Optional
+from typing import Optional, Dict
 
 import discord
 from discord import app_commands
@@ -82,6 +80,9 @@ def save_state():
 
 state = load_state()
 
+# Midlertidige noter pr. bruger (gemt efter /admin modal, brugt når der trykkes knap)
+temp_notes: Dict[int, Optional[str]] = {}
+
 # -------------------- Hjælpere --------------------
 def format_duration(delta: dt.timedelta) -> str:
     secs = int(delta.total_seconds())
@@ -139,7 +140,7 @@ async def delete_status_message_if_any(guild: discord.Guild):
     state["note"].pop(gid, None)
     save_state()
 
-# -------------------- Status-embeds --------------------
+# -------------------- Embeds --------------------
 def build_offline_embed(who: str, since_iso: str, note: Optional[str]) -> discord.Embed:
     try:
         since = dt.datetime.fromisoformat(since_iso)
@@ -176,6 +177,22 @@ def build_online_embed(who: str, total: str, note: Optional[str]) -> discord.Emb
     e.set_footer(text="Planday | Vagtplan")
     return e
 
+def build_vagtplan_embed():
+    today = dt.datetime.now(TZ).date()
+    embed = discord.Embed(
+        title=f"Dagens vagtplan for {dansk_dato(today)}",
+        description="Husk og stemple ind hvad bil du kører i.",
+        color=0x2b90d9,
+    )
+    embed.add_field(name="🕒 Starttid", value=f"{dansk_dato(today)} kl. 19:30", inline=False)
+    embed.add_field(name="✅ Deltager", value="Ingen endnu", inline=True)
+    embed.add_field(name="🕓 Deltager senere", value="Ingen endnu", inline=True)
+    embed.add_field(name="❌ Fraværende", value="Ingen endnu", inline=True)
+    embed.add_field(name="🧭 Disponering", value="Ingen endnu", inline=True)
+    embed.add_field(name="🗒️ Besked", value="Automatisk daglig vagtplan – god vagt i aften ☕", inline=False)
+    embed.set_footer(text="Planday | Vagtplan")
+    return embed
+
 # -------------------- Nedetidsur (opdater embed hvert 30s) --------------------
 @tasks.loop(seconds=30)
 async def downtime_updater():
@@ -193,33 +210,16 @@ async def downtime_updater():
     except Exception as e:
         print("[downtime_updater] fejl:", e)
 
-# -------------------- Vagtplan embed (simpel auto) --------------------
-def build_vagtplan_embed():
-    today = dt.datetime.now(TZ).date()
-    embed = discord.Embed(
-        title=f"Dagens vagtplan for {dansk_dato(today)}",
-        description="Husk og stemple ind hvad bil du kører i.",
-        color=0x2b90d9,
-    )
-    embed.add_field(name="🕒 Starttid", value=f"{dansk_dato(today)} kl. 19:30", inline=False)
-    embed.add_field(name="✅ Deltager", value="Ingen endnu", inline=True)
-    embed.add_field(name="🕓 Deltager senere", value="Ingen endnu", inline=True)
-    embed.add_field(name="❌ Fraværende", value="Ingen endnu", inline=True)
-    embed.add_field(name="🧭 Disponering", value="Ingen endnu", inline=True)
-    embed.add_field(name="🗒️ Besked", value="Automatisk daglig vagtplan – god vagt i aften ☕", inline=False)
-    embed.set_footer(text="Planday | Vagtplan")
-    return embed
-
-# -------------------- Modal-handlers --------------------
-async def handle_deaktiver_submit(inter: discord.Interaction, besked_text: Optional[str]):
+# -------------------- Handlers for actions --------------------
+async def do_deaktiver(inter: discord.Interaction, note: Optional[str]):
     if not state.get("enabled", True):
-        await inter.response.send_message("Planday er allerede deaktiveret.", ephemeral=True)
+        await inter.followup.send("Planday er allerede deaktiveret.", ephemeral=True)
         return
+
     state["enabled"] = False
     gid = str(inter.guild.id)
     since_iso = dt.datetime.now(TZ).isoformat()
     who = inter.user.mention
-    note = besked_text.strip() if besked_text else None
 
     state["disabled_since"][gid] = since_iso
     state["disabled_by"][gid] = who
@@ -227,11 +227,15 @@ async def handle_deaktiver_submit(inter: discord.Interaction, besked_text: Optio
     save_state()
 
     embed = build_offline_embed(who, since_iso, note)
-    msg_id = await post_message_embed(inter.guild, embed)
-    if msg_id:
-        await cleanup_channel_keep_one(inter.guild, msg_id)
+    ch = discord.utils.get(inter.guild.text_channels, name=CHANNEL_NAME)
+    if not ch:
+        await inter.followup.send(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
+        return
 
-    state["last_notice"][gid] = msg_id
+    msg = await ch.send(embed=embed)
+    await cleanup_channel_keep_one(inter.guild, msg.id)
+
+    state["last_notice"][gid] = msg.id
     save_state()
 
     if not downtime_updater.is_running():
@@ -239,10 +243,11 @@ async def handle_deaktiver_submit(inter: discord.Interaction, besked_text: Optio
 
     await inter.followup.send("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
 
-async def handle_aktiver_submit(inter: discord.Interaction, besked_text: Optional[str]):
+async def do_aktiver(inter: discord.Interaction, note: Optional[str]):
     if state.get("enabled", True):
-        await inter.response.send_message("Planday er allerede aktiveret.", ephemeral=True)
+        await inter.followup.send("Planday er allerede aktiveret.", ephemeral=True)
         return
+
     gid = str(inter.guild.id)
     state["enabled"] = True
 
@@ -255,14 +260,16 @@ async def handle_aktiver_submit(inter: discord.Interaction, besked_text: Optiona
         total = format_duration(dt.datetime.now(TZ) - since)
 
     who = inter.user.mention
-    note = besked_text.strip() if besked_text else None
     embed = build_online_embed(who, total, note)
 
-    msg_id = await post_message_embed(inter.guild, embed)
-    if msg_id:
-        await cleanup_channel_keep_one(inter.guild, msg_id)
+    ch = discord.utils.get(inter.guild.text_channels, name=CHANNEL_NAME)
+    if not ch:
+        await inter.followup.send(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
+        return
+    msg = await ch.send(embed=embed)
+    await cleanup_channel_keep_one(inter.guild, msg.id)
 
-    state["last_notice"][gid] = msg_id
+    state["last_notice"][gid] = msg.id
     state["disabled_since"].pop(gid, None)
     state["disabled_by"].pop(gid, None)
     state["note"].pop(gid, None)
@@ -270,61 +277,66 @@ async def handle_aktiver_submit(inter: discord.Interaction, besked_text: Optiona
 
     await inter.followup.send("🟢 Planday er **aktiveret** igen.", ephemeral=True)
 
-# -------------------- Modals --------------------
-class DeaktiverModal(discord.ui.Modal, title="Deaktiver Planday"):
-    besked = discord.ui.TextInput(
-        label="Besked (valgfrit)",
-        style=discord.TextStyle.paragraph,
-        required=False,
-        max_length=300,
-        placeholder="Skriv en kort besked om hvorfor systemet er slukket (valgfrit)"
-    )
-    async def on_submit(self, interaction: discord.Interaction):
-        # vi skal have en 'defer' eller svar hurtigt, da vi sender embed bagefter
-        await interaction.response.defer(ephemeral=True, thinking=False)
-        await handle_deaktiver_submit(interaction, str(self.besked))
+# -------------------- UI: Modal + knapper --------------------
+class AdminActionView(discord.ui.View):
+    def __init__(self, owner_id: int, timeout: int = 120):
+        super().__init__(timeout=timeout)
+        self.owner_id = owner_id
 
-class AktiverModal(discord.ui.Modal, title="Aktiver Planday"):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Kun den bruger, som åbnede /admin, må trykke
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Kun den der åbnede panelet kan bruge disse knapper.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Aktiver", style=discord.ButtonStyle.success, emoji="🟢")
+    async def btn_activate(self, interaction: discord.Interaction, _):
+        note = temp_notes.pop(self.owner_id, None)
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await do_aktiver(interaction, note)
+
+    @discord.ui.button(label="Deaktiver", style=discord.ButtonStyle.danger, emoji="🔴")
+    async def btn_deactivate(self, interaction: discord.Interaction, _):
+        note = temp_notes.pop(self.owner_id, None)
+        await interaction.response.defer(ephemeral=True, thinking=False)
+        await do_deaktiver(interaction, note)
+
+class AdminModal(discord.ui.Modal, title="Admin: Valgfri besked"):
     besked = discord.ui.TextInput(
         label="Besked (valgfrit)",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=300,
-        placeholder="Skriv en kort besked ved aktivering (valgfrit)"
+        placeholder="Skriv en kort besked (valgfrit)"
     )
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=False)
-        await handle_aktiver_submit(interaction, str(self.besked))
+        # Gem besked midlertidigt pr. bruger og vis knapper ephemeralt
+        note = str(self.besked).strip() if self.besked else None
+        temp_notes[interaction.user.id] = note
+        view = AdminActionView(owner_id=interaction.user.id)
+        await interaction.response.send_message(
+            "Vælg handling for Planday:",
+            view=view,
+            ephemeral=True
+        )
 
 # -------------------- Slash Commands --------------------
 @tree.command(
-    name="deaktiver",
-    description="Deaktiver automatisk Planday-udsendelse (åbner skabelon).",
+    name="admin",
+    description="Åbn admin-skabelon (indtast valgfri besked → vælg Aktiver/Deaktiver).",
     guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
-async def deaktiver_cmd(interaction: discord.Interaction):
-    if not state.get("enabled", True):
-        await interaction.response.send_message("Planday er allerede deaktiveret.", ephemeral=True)
-        return
-    await interaction.response.send_modal(DeaktiverModal())
+async def admin_cmd(interaction: discord.Interaction):
+    await interaction.response.send_modal(AdminModal())
 
 @tree.command(
-    name="aktiver",
-    description="Aktiver automatisk Planday-udsendelse igen (åbner skabelon).",
+    name="vagtplan", description="Send en simpel vagtplan (demo).",
     guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-@app_commands.checks.has_role(ROLE_DISP)
-async def aktiver_cmd(interaction: discord.Interaction):
-    if state.get("enabled", True):
-        await interaction.response.send_message("Planday er allerede aktiveret.", ephemeral=True)
-        return
-    await interaction.response.send_modal(AktiverModal())
-
-@tree.command(name="vagtplan", description="Send en simpel vagtplan (demo).",
-              guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def vagtplan_cmd(interaction: discord.Interaction):
     if not state.get("enabled", True):
-        await interaction.response.send_message("⛔ Planday er deaktiveret – aktiver først med /aktiver.", ephemeral=True)
+        await interaction.response.send_message("⛔ Planday er deaktiveret – aktiver via /admin.", ephemeral=True)
         return
     ch = discord.utils.get(interaction.guild.text_channels, name=CHANNEL_NAME)
     if not ch:
