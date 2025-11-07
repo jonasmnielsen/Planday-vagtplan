@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-# Planday | Vagtplan – SOSDAH - ZodiacRP (med /aktiver & /deaktiver + live nedetidsur)
+# Planday | Vagtplan – SOSDAH - ZodiacRP
 # Dansk version med starttid, besked, billede, auto-post kl. 12 og auto-slet kl. 00:00
-# + Toggle-kommandoer til at aktivere/deaktivere automatisk udsendelse og statusbesked med live ur,
-#   som viser hvor længe systemet har været deaktiveret. Uret opdateres løbende mens det er deaktiveret,
-#   og ved aktivering vises den samlede nedetid.
+# + Aktiver/deaktiver med live nedetidsur
 
 import os
 import json
@@ -17,7 +15,9 @@ from discord.ext import tasks
 TOKEN = os.getenv("DISCORD_TOKEN")
 ROLE_DISP = "Disponent"
 CHANNEL_NAME = "🗓️┃planday-dagens-vagtplan"
-# (Valgfrit) Sæt dit server-ID for at få slash-kommandoer med det samme
+TZ = ZoneInfo("Europe/Copenhagen")
+DAILY_H, DAILY_M = 12, 0
+
 def _parse_guild_id():
     raw = os.getenv("DISCORD_GUILD_ID", "").strip()
     try:
@@ -26,11 +26,7 @@ def _parse_guild_id():
         return None
 
 GUILD_ID = _parse_guild_id()
-TZ = ZoneInfo("Europe/Copenhagen")
-DAILY_H = 12
-DAILY_M = 0
-
-STATE_FILE = "planday_state.json"  # persisterer aktiveret/deaktiveret, sidste statusbesked-id, og nedetidsstart pr. guild
+STATE_FILE = "planday_state.json"
 
 # -------------------- Intents & Client --------------------
 intents = discord.Intents.default()
@@ -39,17 +35,18 @@ intents.members = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
-# -------------------- State --------------------
-# Struktur:
-# {
-#   "enabled": true/false,
-#   "last_notice": { guild_id(str): message_id(int) },
-#   "disabled_since": { guild_id(str): iso_timestamp(str) },
-#   "disabled_by": { guild_id(str): user_mention(str) },
-# },
-#   "disabled_since": { guild_id(str): iso_timestamp(str) },
-# }
+# -------------------- Hjælpefunktioner --------------------
+def format_duration(delta: dt.timedelta) -> str:
+    secs = int(delta.total_seconds())
+    h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
+    return f"{h:02}:{m:02}:{s:02}"
 
+def dansk_dato(d: dt.date) -> str:
+    DAYS = ["mandag","tirsdag","onsdag","torsdag","fredag","lørdag","søndag"]
+    MONTHS = ["januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"]
+    return f"{DAYS[d.weekday()]} den {d.day}. {MONTHS[d.month - 1]}"
+
+# -------------------- State --------------------
 def _default_state():
     return {"enabled": True, "last_notice": {}, "disabled_since": {}, "disabled_by": {}}
 
@@ -57,8 +54,6 @@ def load_state():
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if not isinstance(data, dict):
-                return _default_state()
             data.setdefault("enabled", True)
             data.setdefault("last_notice", {})
             data.setdefault("disabled_since", {})
@@ -76,15 +71,26 @@ def save_state():
 
 state = load_state()
 
-# -------------------- Hjælpere --------------------
+# -------------------- Tekstformat --------------------
+def offline_text(who: str, since_iso: str) -> str:
+    try:
+        since = dt.datetime.fromisoformat(since_iso)
+    except Exception:
+        since = dt.datetime.now(TZ)
 
-def format_duration(delta: dt.timedelta) -> str:
-    total = int(delta.total_seconds())
-    hours = total // 3600
-    minutes = (total % 3600) // 60
-    seconds = total % 60
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    now = dt.datetime.now(TZ)
+    elapsed = format_duration(now - since)
+    stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
 
+    lines = [
+        ":no_entry: **Planday er ikke tilgængelig lige nu**",
+        f"Blev deaktiveret af {who} — **{stamp}**",
+        f"🕒 **Nedetid (live): {elapsed}**",
+        "Systemet sender ikke automatisk beskeder, før det aktiveres igen.",
+    ]
+    return "\n".join(lines)
+
+# -------------------- Hjælpefunktioner til beskeder --------------------
 async def post_status_message(guild: discord.Guild, content: str) -> int | None:
     ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
     if not ch:
@@ -92,309 +98,37 @@ async def post_status_message(guild: discord.Guild, content: str) -> int | None:
     msg = await ch.send(content=content)
     return msg.id
 
-async def edit_status_message(guild: discord.Guild, message_id: int, new_content: str):
+async def edit_status_message(guild: discord.Guild, msg_id: int, content: str):
     ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
     if not ch:
         return
     try:
-        m = await ch.fetch_message(message_id)
+        msg = await ch.fetch_message(msg_id)
+        await msg.edit(content=content)
     except Exception:
-        m = None
-    if m:
-        try:
-            await m.edit(content=new_content)
-        except Exception:
-            pass
+        pass
 
 async def delete_status_message_if_any(guild: discord.Guild):
-    try:
-        gid = str(guild.id)
-        last_id = state.get("last_notice", {}).get(gid)
-        if not last_id:
-            return
-        ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-        if not ch:
-            return
-        try:
-            m = await ch.fetch_message(last_id)
-        except Exception:
-            m = None
-        if m:
-            await m.delete()
-        # ryd referencer
-        state["last_notice"].pop(gid, None)
-        state["disabled_since"].pop(gid, None)
-        state.get("disabled_by", {}).pop(gid, None)
-        save_state()
-        maybe_stop_downtime_task()
-    except Exception as e:
-        print("Fejl ved sletning af statusbesked:", e)
-    except Exception as e:
-        print("Fejl ved sletning af statusbesked:", e)
-
-# -------------------- Dansk datoformat --------------------
-DAYS = ["mandag","tirsdag","onsdag","torsdag","fredag","lørdag","søndag"]
-MONTHS = ["januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"]
-
-def dansk_dato(d: dt.date) -> str:
-    return f"{DAYS[d.weekday()]} den {d.day}. {MONTHS[d.month - 1]}"
-
-# -------------------- Gem registreringer --------------------
-registreringer = {}
-
-def get_msg_data(msg_id):
-    if msg_id not in registreringer:
-        registreringer[msg_id] = {"deltager": [], "senere": [], "fravaer": [], "disp": []}
-    return registreringer[msg_id]
-
-# -------------------- Embed opsætning --------------------
-def build_embed(starttid: str, besked: str | None = None, img_url: str | None = None, data=None):
-    today = dt.datetime.now(TZ).date()
-    embed = discord.Embed(
-        title=f"Dagens vagtplan for {dansk_dato(today)}",
-        description="Husk og stemple ind hvad bil du kører i.",
-        color=0x2b90d9
-    )
-
-    embed.add_field(name="🕒 Starttid", value=f"{dansk_dato(today)} kl. {starttid}", inline=False)
-
-    deltager_str = "\n".join(data["deltager"]) if data and data["deltager"] else "Ingen endnu"
-    senere_str = "\n".join(data["senere"]) if data and data["senere"] else "Ingen endnu"
-    fravaer_str = "\n".join(data["fravaer"]) if data and data["fravaer"] else "Ingen endnu"
-    disp_str = "\n".join(data["disp"]) if data and data["disp"] else "Ingen endnu"
-
-    embed.add_field(name="✅ Deltager", value=deltager_str, inline=True)
-    embed.add_field(name="🕓 Deltager senere", value=senere_str, inline=True)
-    embed.add_field(name="❌ Fraværende", value=fravaer_str, inline=True)
-    embed.add_field(name="🧭 Disponering", value=disp_str, inline=True)
-
-    embed.add_field(name="🗒️ Besked", value=besked if besked else "Ingen besked sat", inline=False)
-    embed.set_footer(text="Planday | Vagtplan")
-
-    if img_url and img_url.startswith("http"):
-        embed.set_image(url=img_url)
-
-    return embed
-
-# -------------------- Knapper --------------------
-class VagtplanView(discord.ui.View):
-    def __init__(self, starttid, besked=None, img_url=None):
-        super().__init__(timeout=None)
-        self.starttid = starttid
-        self.besked = besked
-        self.img_url = img_url
-
-    async def update_status(self, interaction: discord.Interaction, kategori: str):
-        msg_id = interaction.message.id
-        user_mention = interaction.user.mention
-        data = get_msg_data(msg_id)
-
-        for k in data.keys():
-            if user_mention in data[k]:
-                data[k].remove(user_mention)
-        if kategori:
-            data[kategori].append(user_mention)
-
-        embed = build_embed(self.starttid, self.besked, self.img_url, data)
-        await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message(f"✅ Registreret som **{kategori}**", ephemeral=True)
-
-    @discord.ui.button(label="Deltager", style=discord.ButtonStyle.success, emoji="✅")
-    async def deltager(self, interaction: discord.Interaction, _):
-        await self.update_status(interaction, "deltager")
-
-    @discord.ui.button(label="Deltager senere", style=discord.ButtonStyle.primary, emoji="🕓")
-    async def senere(self, interaction: discord.Interaction, _):
-        await self.update_status(interaction, "senere")
-
-    @discord.ui.button(label="Fraværende", style=discord.ButtonStyle.danger, emoji="❌")
-    async def fravaer(self, interaction: discord.Interaction, _):
-        await self.update_status(interaction, "fravaer")
-
-    @discord.ui.button(label="Disponent", style=discord.ButtonStyle.secondary, emoji="🧭")
-    async def disponent(self, interaction: discord.Interaction, _):
-        member = interaction.user
-        if not any(r.name == ROLE_DISP for r in member.roles):
-            await interaction.response.send_message("Kun **Disponent** kan bruge denne knap.", ephemeral=True)
-            return
-        msg_id = interaction.message.id
-        data = get_msg_data(msg_id)
-        mention = interaction.user.mention
-        if mention in data["disp"]:
-            data["disp"].remove(mention)
-        else:
-            data["disp"].append(mention)
-        embed = build_embed(self.starttid, self.besked, self.img_url, data)
-        await interaction.message.edit(embed=embed, view=self)
-        await interaction.response.send_message("🧭 Vagtplan opdateret ✅", ephemeral=True)
-
-# -------------------- Modal --------------------
-class BeskedModal(discord.ui.Modal, title="Opret dagens vagtplan"):
-    starttid = discord.ui.TextInput(
-        label="Starttid (fx 19:30)",
-        placeholder="Skriv klokkeslæt her",
-        required=True,
-        max_length=10
-    )
-    besked = discord.ui.TextInput(
-        label="Besked (valgfrit)",
-        style=discord.TextStyle.paragraph,
-        required=False,
-        max_length=300
-    )
-    billede = discord.ui.TextInput(
-        label="Link til billede (valgfrit)",
-        placeholder="Indsæt link til et billede (fx https://i.imgur.com/...png)",
-        required=False,
-        max_length=400
-    )
-
-    def __init__(self, cb):
-        super().__init__()
-        self._cb = cb
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await self._cb(interaction, str(self.starttid), str(self.besked), str(self.billede))
-
-# -------------------- Slash-kommando: manuel vagtplan --------------------
-@tree.command(name="vagtplan", description="Send dagens vagtplan med starttid, besked og billede", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-@app_commands.checks.has_role(ROLE_DISP)
-async def vagtplan_cmd(interaction: discord.Interaction):
-    if not state.get("enabled", True):
-        await interaction.response.send_message("⛔ Planday er deaktiveret – aktiver først med /aktiver.", ephemeral=True)
+    gid = str(guild.id)
+    msg_id = state.get("last_notice", {}).get(gid)
+    if not msg_id:
         return
-
-    async def after_modal(inter: discord.Interaction, starttid: str, besked: str | None, billede: str | None):
-        guild = inter.guild
-        if guild is None:
-            await inter.response.send_message("Kan kun bruges i en server.", ephemeral=True)
-            return
-
-        ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-        if not ch:
-            await inter.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
-            return
-
-        async for msg in ch.history(limit=10):
-            if msg.author == bot.user:
-                await msg.delete()
-
-        embed = build_embed(starttid, besked, billede, get_msg_data("ny"))
-        view = VagtplanView(starttid, besked, billede)
-        sent = await ch.send(content="@everyone", embed=embed, view=view)
-        get_msg_data(sent.id)
-        await inter.response.send_message("✅ Vagtplan sendt med @everyone.", ephemeral=True)
-
-    await interaction.response.send_modal(BeskedModal(after_modal))
-
-# -------------------- Status-tekster --------------------
-
-def offline_text(who: str, since_iso: str) -> str:
-    # Robust formattering uden risiko for uafsluttede strenge
-    try:
-        since = dt.datetime.fromisoformat(since_iso)
-    except Exception:
-        since = dt.datetime.now(TZ)
-    now = dt.datetime.now(TZ)
-    elapsed = format_duration(now - since)
-    stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
-    return "
-".join([
-        ":no_entry: **Planday er ikke tilgængelig lige nu**",
-        f"Blev deaktiveret af {who} — **{stamp}**",
-        f"🕒 **Nedetid (live): {elapsed}**",
-        "Systemet sender ikke automatisk beskeder, før det aktiveres igen.",
-    ])
-
-    # Old style kept here for reference (disabled):
-    # return (
-
-        ":no_entry: **Planday er ikke tilgængelig lige nu**
-"
-        f"Blev deaktiveret af {who} — **{stamp}**
-"
-        f"🕒 **Nedetid (live): {elapsed}**
-"
-        # )
-    except Exception:
-        since = dt.datetime.now(TZ)
-    now = dt.datetime.now(TZ)
-    elapsed = format_duration(now - since)
-    stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
-    return (
-        f":no_entry: **Planday er ikke tilgængelig lige nu**\n"
-        f"Blev deaktiveret af {who} **{stamp}**.\n"
-        f"⏱️ **Nedetid (live): {elapsed}**\n"
-        f# )
-
-# -------------------- Slash-kommandoer: /aktiver & /deaktiver --------------------
-@tree.command(name="deaktiver", description="Deaktiver automatisk Planday-udsendelse og vis status med live ur", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-@app_commands.checks.has_role(ROLE_DISP)
-async def deaktiver_cmd(interaction: discord.Interaction):
-    if not state.get("enabled", True):
-        await interaction.response.send_message("Planday er allerede deaktiveret.", ephemeral=True)
+    ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
+    if not ch:
         return
-
-    state["enabled"] = False
-    gid = str(interaction.guild.id) if interaction.guild else None
-    since_iso = dt.datetime.now(TZ).isoformat()
-    who = interaction.user.mention
-    if gid:
-        state.setdefault("disabled_since", {})[gid] = since_iso
-        state.setdefault("disabled_by", {})[gid] = who
+    try:
+        msg = await ch.fetch_message(msg_id)
+        await msg.delete()
+    except Exception:
+        pass
+    state["last_notice"].pop(gid, None)
+    state["disabled_since"].pop(gid, None)
+    state["disabled_by"].pop(gid, None)
     save_state()
 
-    guild = interaction.guild
-    if guild:
-        text = offline_text(who, since_iso)
-        msg_id = await post_status_message(guild, text)
-        if msg_id:
-            state.setdefault("last_notice", {})[gid] = msg_id
-            save_state()
-            if not downtime_updater.is_running():
-                downtime_updater.start()
-
-    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
-
-@tree.command(name="aktiver", description="Aktiver automatisk Planday-udsendelse, stop live ur og vis samlet nedetid", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-@app_commands.checks.has_role(ROLE_DISP)
-async def aktiver_cmd(interaction: discord.Interaction):
-    if state.get("enabled", True):
-        await interaction.response.send_message("Planday er allerede aktiveret.", ephemeral=True)
-        return
-
-    state["enabled"] = True
-    gid = str(interaction.guild.id) if interaction.guild else None
-
-    total_text = ""
-    who = interaction.user.mention
-    if gid and gid in state.get("disabled_since", {}):
-        try:
-            since = dt.datetime.fromisoformat(state["disabled_since"][gid])
-        except Exception:
-            since = dt.datetime.now(TZ)
-        now = dt.datetime.now(TZ)
-        total_text = format_duration(now - since)
-
-    # ryd statusbesked og state
-    if interaction.guild:
-        await delete_status_message_if_any(interaction.guild)
-
-    save_state()
-
-    if interaction.guild:
-        ok_text = (
-            f":white_check_mark: Planday er **aktiveret igen** af {who}. "
-            f"Nedetid i alt: **{total_text or '00:00:00'}**."
-        )
-        await post_status_message(interaction.guild, ok_text)
-
-    await interaction.response.send_message("🟢 Planday er **aktiveret** igen.", ephemeral=True), ephemeral=True)
-
-# -------------------- Live nedetids-opdatering (kører mens deaktiveret) --------------------
+# -------------------- Nedetidsur --------------------
 @tasks.loop(seconds=30)
 async def downtime_updater():
-    # Opdater hver 30. sekund alle kendte statusbeskeder med nyt ur
     try:
         for guild in bot.guilds:
             gid = str(guild.id)
@@ -403,12 +137,103 @@ async def downtime_updater():
             who = state.get("disabled_by", {}).get(gid)
             if not msg_id or not since_iso or not who:
                 continue
-            new_text = offline_text(who, since_iso)
-            await edit_status_message(guild, msg_id, new_text)
+            await edit_status_message(guild, msg_id, offline_text(who, since_iso))
     except Exception as e:
         print("[downtime_updater] fejl:", e)
 
-# -------------------- Auto-post hver dag kl. 12 --------------------
+# -------------------- Embed & UI --------------------
+def build_embed(starttid: str, besked=None, img_url=None, data=None):
+    today = dt.datetime.now(TZ).date()
+    embed = discord.Embed(
+        title=f"Dagens vagtplan for {dansk_dato(today)}",
+        description="Husk og stemple ind hvad bil du kører i.",
+        color=0x2b90d9,
+    )
+    embed.add_field(name="🕒 Starttid", value=f"{dansk_dato(today)} kl. {starttid}", inline=False)
+    deltager_str = "\n".join(data.get("deltager", [])) if data else "Ingen endnu"
+    senere_str = "\n".join(data.get("senere", [])) if data else "Ingen endnu"
+    fravaer_str = "\n".join(data.get("fravaer", [])) if data else "Ingen endnu"
+    disp_str = "\n".join(data.get("disp", [])) if data else "Ingen endnu"
+    embed.add_field(name="✅ Deltager", value=deltager_str, inline=True)
+    embed.add_field(name="🕓 Deltager senere", value=senere_str, inline=True)
+    embed.add_field(name="❌ Fraværende", value=fravaer_str, inline=True)
+    embed.add_field(name="🧭 Disponering", value=disp_str, inline=True)
+    embed.add_field(name="🗒️ Besked", value=besked or "Ingen besked sat", inline=False)
+    if img_url and img_url.startswith("http"):
+        embed.set_image(url=img_url)
+    embed.set_footer(text="Planday | Vagtplan")
+    return embed
+
+# -------------------- Slash Commands --------------------
+@tree.command(name="vagtplan", description="Send dagens vagtplan med starttid, besked og billede", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def vagtplan_cmd(interaction: discord.Interaction):
+    if not state.get("enabled", True):
+        await interaction.response.send_message("⛔ Planday er deaktiveret – aktiver først med /aktiver.", ephemeral=True)
+        return
+    await interaction.response.send_message("Denne kommando er under udbygning.", ephemeral=True)
+
+@tree.command(name="deaktiver", description="Deaktiver automatisk Planday og vis status", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def deaktiver_cmd(interaction: discord.Interaction):
+    if not state.get("enabled", True):
+        await interaction.response.send_message("Planday er allerede deaktiveret.", ephemeral=True)
+        return
+    state["enabled"] = False
+    gid = str(interaction.guild.id)
+    since_iso = dt.datetime.now(TZ).isoformat()
+    who = interaction.user.mention
+    state["disabled_since"][gid] = since_iso
+    state["disabled_by"][gid] = who
+    save_state()
+    text = offline_text(who, since_iso)
+    msg_id = await post_status_message(interaction.guild, text)
+    state["last_notice"][gid] = msg_id
+    save_state()
+    if not downtime_updater.is_running():
+        downtime_updater.start()
+    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
+
+@tree.command(name="aktiver", description="Aktiver automatisk Planday igen", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def aktiver_cmd(interaction: discord.Interaction):
+    if state.get("enabled", True):
+        await interaction.response.send_message("Planday er allerede aktiveret.", ephemeral=True)
+        return
+    gid = str(interaction.guild.id)
+    state["enabled"] = True
+    total = "00:00:00"
+    if gid in state["disabled_since"]:
+        since = dt.datetime.fromisoformat(state["disabled_since"][gid])
+        total = format_duration(dt.datetime.now(TZ) - since)
+    await delete_status_message_if_any(interaction.guild)
+    save_state()
+    who = interaction.user.mention
+    await post_status_message(interaction.guild, f":white_check_mark: Planday er **aktiveret igen** af {who}. Nedetid i alt: **{total}**.")
+    await interaction.response.send_message("🟢 Planday er **aktiveret** igen.", ephemeral=True)
+
+@tree.command(name="ping", description="Test at botten svarer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+async def ping_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong!", ephemeral=True)
+
+@tree.command(name="sync", description="Tving sync", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def sync_cmd(interaction: discord.Interaction):
+    gid = interaction.guild_id
+    guild_obj = discord.Object(id=gid)
+    await tree.sync(guild=guild_obj)
+    cmds = await tree.fetch_commands(guild=guild_obj)
+    names = ", ".join(c.name for c in cmds)
+    await interaction.response.send_message(f"Synkroniseret: {names}", ephemeral=True)
+
+@tree.command(name="cleanup_global", description="Fjern gamle globale commands", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def cleanup_global_cmd(interaction: discord.Interaction):
+    tree.clear_commands(guild=None)
+    await tree.sync()
+    await interaction.response.send_message("Globale kommandoer ryddet.", ephemeral=True)
+
+# -------------------- Auto-opgaver --------------------
 @tasks.loop(time=dt.time(hour=DAILY_H, minute=DAILY_M, tzinfo=TZ))
 async def daily_post():
     await bot.wait_until_ready()
@@ -417,109 +242,53 @@ async def daily_post():
         return
     for guild in bot.guilds:
         ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-        if ch:
-            # Bevar statusbesked (sluk/aktiver-info) når der ryddes op
-            gid = str(guild.id)
-            keep_id = state.get("last_notice", {}).get(gid)
-            async for msg in ch.history(limit=10):
-                if msg.author == bot.user and msg.id != keep_id:
-                    await msg.delete()
-            besked = "Automatisk daglig vagtplan – god vagt i aften ☕"
-            starttid = "19:30"
-            img_url = None
-            embed = build_embed(starttid, besked, img_url, {"deltager": [], "senere": [], "fravaer": [], "disp": []})
-            await ch.send(content="@everyone", embed=embed, view=VagtplanView(starttid, besked, img_url))
-            print(f"[AUTO] Ny vagtplan sendt til {guild.name} med @everyone")
+        if not ch:
+            continue
+        besked = "Automatisk daglig vagtplan – god vagt i aften ☕"
+        starttid = "19:30"
+        embed = build_embed(starttid, besked, None, {"deltager": [], "senere": [], "fravaer": [], "disp": []})
+        await ch.send(content="@everyone", embed=embed)
+        print(f"[AUTO] Ny vagtplan sendt til {guild.name}")
 
 @tasks.loop(time=dt.time(hour=0, minute=0, tzinfo=TZ))
 async def midnight_cleanup():
     await bot.wait_until_ready()
     for guild in bot.guilds:
         ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-        if ch:
-            gid = str(guild.id)
-            keep_id = state.get("last_notice", {}).get(gid)
-            async for msg in ch.history(limit=50):
-                if msg.author == bot.user and msg.id != keep_id:
-                    await msg.delete()
-            print(f"[AUTO] Vagtplan slettet ved midnat i {guild.name}")
-
-# -------------------- Fejlhåndtering for app commands --------------------
-@tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    try:
-        if isinstance(error, app_commands.errors.MissingRole):
-            await interaction.response.send_message("Du mangler rollen **Disponent** for at bruge denne kommando.", ephemeral=True)
-        else:
-            msg = f"Fejl: {type(error).__name__}: {error}"
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
-    except Exception:
-        pass
-
-# Simpel ping-kommando til test (guild)
-@tree.command(name="ping", description="Test at botten svarer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-async def ping_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message("Pong!", ephemeral=True)
-
-# Force-sync kommando (kun Disponent)
-@tree.command(name="sync", description="Tving slash-kommando sync for denne server", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-@app_commands.checks.has_role(ROLE_DISP)
-async def sync_cmd(interaction: discord.Interaction):
-    gid = interaction.guild_id
-    guild_obj = discord.Object(id=gid)
-    await tree.sync(guild=guild_obj)
-    cmds = await tree.fetch_commands(guild=guild_obj)
-    names = ", ".join(c.name for c in cmds)
-    await interaction.response.send_message(f"Synkroniseret. Kommandoer: {names}", ephemeral=True)
-
-# Ryd globale kommandoer (kun Disponent) – fjerner dubletter i menuen
-@tree.command(name="cleanup_global", description="Fjern gamle globale slash-kommandoer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
-@app_commands.checks.has_role(ROLE_DISP)
-async def cleanup_global_cmd(interaction: discord.Interaction):
-    # Fjerner globale commands fra denne applikation
-    tree.clear_commands(guild=None)
-    await tree.sync()  # push tom global liste
-    await interaction.response.send_message("Globale kommandoer ryddet. Dubletter burde forsvinde inden for få sekunder.", ephemeral=True)
+        if not ch:
+            continue
+        async for msg in ch.history(limit=50):
+            if msg.author == bot.user:
+                await msg.delete()
+        print(f"[AUTO] Vagtplan slettet ved midnat i {guild.name}")
 
 # -------------------- Start --------------------
 @bot.event
 async def on_ready():
     print(f"✅ Logget ind som {bot.user}")
     try:
-        if GUILD_ID is not None:
+        if GUILD_ID:
             guild_obj = discord.Object(id=GUILD_ID)
-            # 1) Ryd globale commands (for at undgå dubletter)
             tree.clear_commands(guild=None)
-            await tree.sync()  # push tom global liste
-            # 2) Sync kun til den angivne guild
+            await tree.sync()
             await tree.sync(guild=guild_obj)
             cmds = await tree.fetch_commands(guild=guild_obj)
             print("Guild-commands:", [c.name for c in cmds])
         else:
-            # Ingen GUILD_ID: brug global sync (kan tage tid første gang)
             await tree.sync()
-            gcmds = await tree.fetch_commands()
-            print("Global-commands:", [c.name for c in gcmds])
+            cmds = await tree.fetch_commands()
+            print("Global-commands:", [c.name for c in cmds])
     except Exception as e:
         print("Fejl ved sync:", e)
+
     if not daily_post.is_running():
         daily_post.start()
-        print("📅 Automatisk daglig post aktiveret (kl. 12:00)")
     if not midnight_cleanup.is_running():
         midnight_cleanup.start()
-        print("🕛 Automatisk sletning ved midnat aktiveret")
-    has_any_down = bool(state.get("disabled_since")) and bool(state.get("last_notice"))
-    if has_any_down and not downtime_updater.is_running():
+    if not downtime_updater.is_running() and not state.get("enabled", True):
         downtime_updater.start()
-        print("⏱️ Live nedetids-ur genoptaget")
 
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
-
-
-
