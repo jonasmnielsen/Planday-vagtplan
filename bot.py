@@ -290,6 +290,7 @@ async def vagtplan_cmd(interaction: discord.Interaction):
 # -------------------- Status-tekster --------------------
 
 def offline_text(who: str, since_iso: str) -> str:
+    # Robust formattering uden risiko for uafsluttede strenge
     try:
         since = dt.datetime.fromisoformat(since_iso)
     except Exception:
@@ -297,15 +298,24 @@ def offline_text(who: str, since_iso: str) -> str:
     now = dt.datetime.now(TZ)
     elapsed = format_duration(now - since)
     stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
-    return (
+    return "
+".join([
+        ":no_entry: **Planday er ikke tilgængelig lige nu**",
+        f"Blev deaktiveret af {who} — **{stamp}**",
+        f"🕒 **Nedetid (live): {elapsed}**",
+        "Systemet sender ikke automatisk beskeder, før det aktiveres igen.",
+    ])
+
+    # Old style kept here for reference (disabled):
+    # return (
+
         ":no_entry: **Planday er ikke tilgængelig lige nu**
 "
         f"Blev deaktiveret af {who} — **{stamp}**
 "
         f"🕒 **Nedetid (live): {elapsed}**
 "
-        "Systemet sender ikke automatisk beskeder, før det aktiveres igen."
-    )
+        # )
     except Exception:
         since = dt.datetime.now(TZ)
     now = dt.datetime.now(TZ)
@@ -315,8 +325,7 @@ def offline_text(who: str, since_iso: str) -> str:
         f":no_entry: **Planday er ikke tilgængelig lige nu**\n"
         f"Blev deaktiveret af {who} **{stamp}**.\n"
         f"⏱️ **Nedetid (live): {elapsed}**\n"
-        f"Systemet sender ikke automatisk beskeder, før det aktiveres igen."
-    )
+        f# )
 
 # -------------------- Slash-kommandoer: /aktiver & /deaktiver --------------------
 @tree.command(name="deaktiver", description="Deaktiver automatisk Planday-udsendelse og vis status med live ur", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
