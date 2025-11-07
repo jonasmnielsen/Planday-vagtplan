@@ -14,7 +14,7 @@ from discord import app_commands
 from discord.ext import tasks
 
 # -------------------- Konfiguration --------------------
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("MTQyNzI0Mzc1MDkzMzEzOTQ2Ng.GESyrb.slMJqwmO2sTSikWxa7U1I0KmEVVGhQ3uCKghAI")
 ROLE_DISP = "Disponent"
 CHANNEL_NAME = "🗓️┃planday-dagens-vagtplan"
 TZ = ZoneInfo("Europe/Copenhagen")
@@ -443,3 +443,4 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
+
