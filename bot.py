@@ -398,8 +398,11 @@ async def daily_post():
     for guild in bot.guilds:
         ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
         if ch:
+            # Bevar statusbesked (sluk/aktiver-info) når der ryddes op
+            gid = str(guild.id)
+            keep_id = state.get("last_notice", {}).get(gid)
             async for msg in ch.history(limit=10):
-                if msg.author == bot.user:
+                if msg.author == bot.user and msg.id != keep_id:
                     await msg.delete()
             besked = "Automatisk daglig vagtplan – god vagt i aften ☕"
             starttid = "19:30"
@@ -408,15 +411,16 @@ async def daily_post():
             await ch.send(content="@everyone", embed=embed, view=VagtplanView(starttid, besked, img_url))
             print(f"[AUTO] Ny vagtplan sendt til {guild.name} med @everyone")
 
-# -------------------- Auto-slet ved midnat --------------------
 @tasks.loop(time=dt.time(hour=0, minute=0, tzinfo=TZ))
 async def midnight_cleanup():
     await bot.wait_until_ready()
     for guild in bot.guilds:
         ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
         if ch:
+            gid = str(guild.id)
+            keep_id = state.get("last_notice", {}).get(gid)
             async for msg in ch.history(limit=50):
-                if msg.author == bot.user:
+                if msg.author == bot.user and msg.id != keep_id:
                     await msg.delete()
             print(f"[AUTO] Vagtplan slettet ved midnat i {guild.name}")
 
@@ -474,4 +478,5 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
+
 
