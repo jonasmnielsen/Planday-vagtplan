@@ -17,6 +17,8 @@ from discord.ext import tasks
 TOKEN = os.getenv("DISCORD_TOKEN")
 ROLE_DISP = "Disponent"
 CHANNEL_NAME = "🗓️┃planday-dagens-vagtplan"
+# (Valgfrit) Sæt dit server-ID for at få slash-kommandoer med det samme
+GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0")) or None
 TZ = ZoneInfo("Europe/Copenhagen")
 DAILY_H = 12
 DAILY_M = 0
@@ -418,13 +420,40 @@ async def midnight_cleanup():
                     await msg.delete()
             print(f"[AUTO] Vagtplan slettet ved midnat i {guild.name}")
 
+# -------------------- Fejlhåndtering for app commands --------------------
+@tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    try:
+        if isinstance(error, app_commands.errors.MissingRole):
+            await interaction.response.send_message("Du mangler rollen **Disponent** for at bruge denne kommando.", ephemeral=True)
+        else:
+            msg = f"Fejl: {type(error).__name__}: {error}"
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
+
+# Simpel ping-kommando til test
+@tree.command(name="ping", description="Test at botten svarer")
+async def ping_cmd(interaction: discord.Interaction):
+    await interaction.response.send_message("Pong!", ephemeral=True)
+
 # -------------------- Start --------------------
 @bot.event
 async def on_ready():
     print(f"✅ Logget ind som {bot.user}")
     try:
-        await tree.sync()
-        print("Slash-kommandoer synkroniseret.")
+        if GUILD_ID:
+            guild_obj = discord.Object(id=GUILD_ID)
+            # Kopiér globale kommandoer til guild for instant synk
+            tree.copy_global_to(guild=guild_obj)
+            await tree.sync(guild=guild_obj)
+            print(f"Slash-kommandoer synkroniseret for guild {GUILD_ID}.")
+        else:
+            await tree.sync()
+            print("Slash-kommandoer synkroniseret globalt.")
     except Exception as e:
         print("Fejl ved sync:", e)
     if not daily_post.is_running():
@@ -433,7 +462,6 @@ async def on_ready():
     if not midnight_cleanup.is_running():
         midnight_cleanup.start()
         print("🕛 Automatisk sletning ved midnat aktiveret")
-    # Hvis der var en aktiv deaktivering før bot-restart, genstart live-uret
     has_any_down = bool(state.get("disabled_since")) and bool(state.get("last_notice"))
     if has_any_down and not downtime_updater.is_running():
         downtime_updater.start()
@@ -443,5 +471,7 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
-
+    if not TOKEN:
+        raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
+    bot.run(TOKEN)
 
