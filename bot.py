@@ -439,10 +439,21 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     except Exception:
         pass
 
-# Simpel ping-kommando til test
+# Simpel ping-kommando til test (guild)
 @tree.command(name="ping", description="Test at botten svarer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!", ephemeral=True)
+
+# Force-sync kommando (kun Disponent)
+@tree.command(name="sync", description="Tving slash-kommando sync for denne server", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@app_commands.checks.has_role(ROLE_DISP)
+async def sync_cmd(interaction: discord.Interaction):
+    gid = interaction.guild_id
+    guild_obj = discord.Object(id=gid)
+    await tree.sync(guild=guild_obj)
+    cmds = await tree.fetch_commands(guild=guild_obj)
+    names = ", ".join(c.name for c in cmds)
+    await interaction.response.send_message(f"Synkroniseret. Kommandoer: {names}", ephemeral=True)
 
 # -------------------- Start --------------------
 @bot.event
@@ -451,13 +462,15 @@ async def on_ready():
     try:
         if GUILD_ID:
             guild_obj = discord.Object(id=GUILD_ID)
-            # Kopiér globale kommandoer til guild for instant synk
-            tree.copy_global_to(guild=guild_obj)
+            # Sync KUN til den angivne guild for instant-tilgængelighed
             await tree.sync(guild=guild_obj)
-            print(f"Slash-kommandoer synkroniseret for guild {GUILD_ID}.")
+            cmds = await tree.fetch_commands(guild=guild_obj)
+            print("Guild-commands:", [c.name for c in cmds])
         else:
+            # Hvis ingen GUILD_ID, sync globalt (kan være langsomt første gang)
             await tree.sync()
-            print("Slash-kommandoer synkroniseret globalt.")
+            gcmds = await tree.fetch_commands()
+            print("Global-commands:", [c.name for c in gcmds])
     except Exception as e:
         print("Fejl ved sync:", e)
     if not daily_post.is_running():
@@ -472,6 +485,9 @@ async def on_ready():
         print("⏱️ Live nedetids-ur genoptaget")
 
 if __name__ == "__main__":
+    if not TOKEN:
+        raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
+    bot.run(TOKEN)
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
