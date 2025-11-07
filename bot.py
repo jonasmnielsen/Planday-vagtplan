@@ -45,10 +45,13 @@ tree = app_commands.CommandTree(bot)
 #   "enabled": true/false,
 #   "last_notice": { guild_id(str): message_id(int) },
 #   "disabled_since": { guild_id(str): iso_timestamp(str) },
+#   "disabled_by": { guild_id(str): user_mention(str) },
+# },
+#   "disabled_since": { guild_id(str): iso_timestamp(str) },
 # }
 
 def _default_state():
-    return {"enabled": True, "last_notice": {}, "disabled_since": {}}
+    return {"enabled": True, "last_notice": {}, "disabled_since": {}, "disabled_by": {}}
 
 def load_state():
     try:
@@ -59,6 +62,7 @@ def load_state():
             data.setdefault("enabled", True)
             data.setdefault("last_notice", {})
             data.setdefault("disabled_since", {})
+            data.setdefault("disabled_by", {})
             return data
     except Exception:
         return _default_state()
@@ -120,7 +124,11 @@ async def delete_status_message_if_any(guild: discord.Guild):
         # ryd referencer
         state["last_notice"].pop(gid, None)
         state["disabled_since"].pop(gid, None)
+        state.get("disabled_by", {}).pop(gid, None)
         save_state()
+        maybe_stop_downtime_task()
+    except Exception as e:
+        print("Fejl ved sletning af statusbesked:", e)
     except Exception as e:
         print("Fejl ved sletning af statusbesked:", e)
 
@@ -290,6 +298,17 @@ def offline_text(who: str, since_iso: str) -> str:
     elapsed = format_duration(now - since)
     stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
     return (
+        ":no_entry: **Planday er ikke tilgængelig lige nu**\n"
+        f"Blev deaktiveret af {who} — **{stamp}**\n"
+        f"🕒 **Nedetid (live): {elapsed}**\n"
+        "Systemet sender ikke automatisk beskeder, før det aktiveres igen."
+    )
+    except Exception:
+        since = dt.datetime.now(TZ)
+    now = dt.datetime.now(TZ)
+    elapsed = format_duration(now - since)
+    stamp = since.astimezone(TZ).strftime("%d-%m-%Y kl. %H:%M:%S")
+    return (
         f":no_entry: **Planday er ikke tilgængelig lige nu**\n"
         f"Blev deaktiveret af {who} **{stamp}**.\n"
         f"⏱️ **Nedetid (live): {elapsed}**\n"
@@ -307,12 +326,13 @@ async def deaktiver_cmd(interaction: discord.Interaction):
     state["enabled"] = False
     gid = str(interaction.guild.id) if interaction.guild else None
     since_iso = dt.datetime.now(TZ).isoformat()
+    who = interaction.user.mention
     if gid:
         state.setdefault("disabled_since", {})[gid] = since_iso
+        state.setdefault("disabled_by", {})[gid] = who
     save_state()
 
     guild = interaction.guild
-    who = interaction.user.mention
     if guild:
         text = offline_text(who, since_iso)
         msg_id = await post_status_message(guild, text)
@@ -322,7 +342,7 @@ async def deaktiver_cmd(interaction: discord.Interaction):
             if not downtime_updater.is_running():
                 downtime_updater.start()
 
-    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True)
+    await interaction.response.send_message("🔴 Planday er nu **deaktiveret**.", ephemeral=True), ephemeral=True)
 
 @tree.command(name="aktiver", description="Aktiver automatisk Planday-udsendelse, stop live ur og vis samlet nedetid", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
@@ -335,6 +355,7 @@ async def aktiver_cmd(interaction: discord.Interaction):
     gid = str(interaction.guild.id) if interaction.guild else None
 
     total_text = ""
+    who = interaction.user.mention
     if gid and gid in state.get("disabled_since", {}):
         try:
             since = dt.datetime.fromisoformat(state["disabled_since"][gid])
@@ -343,13 +364,12 @@ async def aktiver_cmd(interaction: discord.Interaction):
         now = dt.datetime.now(TZ)
         total_text = format_duration(now - since)
 
-    # ryd statusbesked og disabled_since
+    # ryd statusbesked og state
     if interaction.guild:
         await delete_status_message_if_any(interaction.guild)
 
     save_state()
 
-    who = interaction.user.mention
     if interaction.guild:
         ok_text = (
             f":white_check_mark: Planday er **aktiveret igen** af {who}. "
@@ -357,7 +377,7 @@ async def aktiver_cmd(interaction: discord.Interaction):
         )
         await post_status_message(interaction.guild, ok_text)
 
-    await interaction.response.send_message("🟢 Planday er **aktiveret** igen.", ephemeral=True)
+    await interaction.response.send_message("🟢 Planday er **aktiveret** igen.", ephemeral=True), ephemeral=True)
 
 # -------------------- Live nedetids-opdatering (kører mens deaktiveret) --------------------
 @tasks.loop(seconds=30)
@@ -368,28 +388,9 @@ async def downtime_updater():
             gid = str(guild.id)
             msg_id = state.get("last_notice", {}).get(gid)
             since_iso = state.get("disabled_since", {}).get(gid)
-            if not msg_id or not since_iso:
+            who = state.get("disabled_by", {}).get(gid)
+            if not msg_id or not since_iso or not who:
                 continue
-            # Construct fresh content
-            # Bemærk: vi bevarer "deaktiveret af"-brugeren ved at hente seneste kendte besked og parse er upraktisk,
-            # så vi gemmer ikke navnet separat. I praksis vil tekst stadig give mening.
-            # For fuld præcision kan man udvide state til også at gemme "disabled_by" pr. guild.
-            # Her forsøger vi at læse forrige besked for at bevare navnet hvis muligt.
-            who = "en disponent"
-            try:
-                ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-                if ch:
-                    m = await ch.fetch_message(msg_id)
-                    if m and m.content:
-                        # Prøv at hive mention ud mellem "af " og næste linjeskift
-                        content = m.content
-                        marker = "Blev deaktiveret af "
-                        if marker in content:
-                            rest = content.split(marker, 1)[1]
-                            who = rest.split("\n", 1)[0]
-            except Exception:
-                pass
-
             new_text = offline_text(who, since_iso)
             await edit_status_message(guild, msg_id, new_text)
     except Exception as e:
@@ -507,3 +508,5 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
+
+
