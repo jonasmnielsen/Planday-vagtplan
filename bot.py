@@ -476,20 +476,20 @@ async def cleanup_global_cmd(interaction: discord.Interaction):
 async def on_ready():
     print(f"✅ Logget ind som {bot.user}")
     try:
-        if GUILD_ID:
-        guild_obj = discord.Object(id=GUILD_ID)
-        # 1) Sørg for, at der ikke er globale (for at undgå dubletter)
-        tree.clear_commands(guild=None)
-        await tree.sync()  # tøm globalt
-        # 2) Sync kun til den angivne guild
-        await tree.sync(guild=guild_obj)
-        cmds = await tree.fetch_commands(guild=guild_obj)
-        print("Guild-commands:", [c.name for c in cmds])
-    else:
-        # Ingen GUILD_ID: brug global sync (kan tage tid første gang)
-        await tree.sync()
-        gcmds = await tree.fetch_commands()
-        print("Global-commands:", [c.name for c in gcmds])
+        if GUILD_ID is not None:
+            guild_obj = discord.Object(id=GUILD_ID)
+            # 1) Ryd globale commands (for at undgå dubletter)
+            tree.clear_commands(guild=None)
+            await tree.sync()  # push tom global liste
+            # 2) Sync kun til den angivne guild
+            await tree.sync(guild=guild_obj)
+            cmds = await tree.fetch_commands(guild=guild_obj)
+            print("Guild-commands:", [c.name for c in cmds])
+        else:
+            # Ingen GUILD_ID: brug global sync (kan tage tid første gang)
+            await tree.sync()
+            gcmds = await tree.fetch_commands()
+            print("Global-commands:", [c.name for c in gcmds])
     except Exception as e:
         print("Fejl ved sync:", e)
     if not daily_post.is_running():
@@ -504,12 +504,6 @@ async def on_ready():
         print("⏱️ Live nedetids-ur genoptaget")
 
 if __name__ == "__main__":
-    if not TOKEN:
-        raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
-    bot.run(TOKEN)
-    if not TOKEN:
-        raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
-    bot.run(TOKEN)
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
