@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 # Planday | Vagtplan – SOSDAH - ZodiacRP
-# - /deaktiver [besked]: slår auto fra, poster status-EMBED m. live-ur og rydder kanalen (beholder statussen)
-# - /aktiver   [besked]: slår auto til igen, poster info-EMBED, rydder kanalen (beholder aktiveringsbeskeden)
-# - Auto vagtplan kl. 12, auto-slet ved midnat (respekterer on/off)
-# - State i planday_state.json
-# - Guild-sync for instant slash-commands (brug DISCORD_GUILD_ID)
-# - Billede ved deaktiveret: OFFLINE_IMAGE_URL (anbefalet) eller lokal fil offline.jpg
+# /deaktiver [besked]  -> slår auto fra, poster status-EMBED m. live-ur, rydder kanalen (beholder status)
+# /aktiver   [besked]  -> slår auto til, poster info-EMBED, rydder kanalen (beholder info)
+# Auto vagtplan kl. 12, oprydning ved midnat (respekterer on/off)
+# State i planday_state.json
+# Guild-sync for instant slash-commands (brug DISCORD_GUILD_ID)
 
 import os
 import json
@@ -17,7 +16,7 @@ import discord
 from discord import app_commands
 from discord.ext import tasks
 
-# --------- Valgfrit: .env support -------------
+# (valgfrit) .env support
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -41,10 +40,6 @@ def _parse_guild_id() -> Optional[int]:
 
 GUILD_ID = _parse_guild_id()
 STATE_FILE = "planday_state.json"
-
-# Billede til deaktiveret-status
-OFFLINE_IMAGE_URL = os.getenv("OFFLINE_IMAGE_URL", "").strip() or None
-OFFLINE_IMAGE_PATH = os.getenv("OFFLINE_IMAGE_PATH", "offline.jpg")  # brug lokal fil hvis URL ikke er sat
 
 # -------------------- Intents & Client --------------------
 intents = discord.Intents.default()
@@ -110,14 +105,11 @@ async def cleanup_channel_keep_one(guild: discord.Guild, keep_message_id: int):
         except Exception:
             pass
 
-async def post_message_embed(guild: discord.Guild, embed: discord.Embed, file: Optional[discord.File] = None) -> Optional[int]:
+async def post_message_embed(guild: discord.Guild, embed: discord.Embed) -> Optional[int]:
     ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
     if not ch:
         return None
-    if file:
-        m = await ch.send(embed=embed, file=file)
-    else:
-        m = await ch.send(embed=embed)
+    m = await ch.send(embed=embed)
     return m.id
 
 async def edit_message_embed(guild: discord.Guild, msg_id: int, embed: discord.Embed):
@@ -167,13 +159,7 @@ def build_offline_embed(who: str, since_iso: str, note: Optional[str]) -> discor
     e.add_field(name="Nedetid (live)", value=f"**{elapsed}**", inline=False)
     if note:
         e.add_field(name="Besked", value=note, inline=False)
-    e.set_footer(text="Planday | Vagtplan")
-    # Billede tilføjes ved send (enten URL direkte eller attachment)
-    if OFFLINE_IMAGE_URL:
-        e.set_image(url=OFFLINE_IMAGE_URL)
-    else:
-        # hvis vi sender via attachment, sætter vi url'en i send-fasen
-        pass
+    e.set_footer(text="Systemet sender ikke automatisk beskeder, før det aktiveres igen.")
     return e
 
 def build_online_embed(who: str, total: str, note: Optional[str]) -> discord.Embed:
@@ -245,18 +231,9 @@ async def deaktiver_cmd(interaction: discord.Interaction, besked: Optional[str] 
     state["note"][gid] = besked.strip() if besked else None
     save_state()
 
-    # Byg embed
     embed = build_offline_embed(who, since_iso, state["note"][gid])
+    msg_id = await post_message_embed(interaction.guild, embed)
 
-    # Vedhæft lokal fil hvis ingen URL er sat, og filen findes
-    file = None
-    if not OFFLINE_IMAGE_URL and os.path.isfile(OFFLINE_IMAGE_PATH):
-        file = discord.File(OFFLINE_IMAGE_PATH, filename="offline.jpg")
-        embed.set_image(url="attachment://offline.jpg")
-
-    msg_id = await post_message_embed(interaction.guild, embed, file=file)
-
-    # Ryd kanalen for alt andet end statusbeskeden
     if msg_id:
         await cleanup_channel_keep_one(interaction.guild, msg_id)
 
@@ -295,11 +272,9 @@ async def aktiver_cmd(interaction: discord.Interaction, besked: Optional[str] = 
 
     msg_id = await post_message_embed(interaction.guild, embed)
 
-    # Ryd kanalen for alt andet end aktiveringsbeskeden
     if msg_id:
         await cleanup_channel_keep_one(interaction.guild, msg_id)
 
-    # Ryd deaktiverings-state; behold last_notice på aktiveringsbeskeden
     state["last_notice"][gid] = msg_id
     state["disabled_since"].pop(gid, None)
     state["disabled_by"].pop(gid, None)
@@ -319,7 +294,6 @@ async def vagtplan_cmd(interaction: discord.Interaction):
     if not ch:
         await interaction.response.send_message(f"Kanalen '{CHANNEL_NAME}' blev ikke fundet.", ephemeral=True)
         return
-    # Bevar statusbesked hvis den findes
     gid = str(interaction.guild.id)
     keep_id = state.get("last_notice", {}).get(gid)
     async for msg in ch.history(limit=50):
@@ -331,11 +305,13 @@ async def vagtplan_cmd(interaction: discord.Interaction):
     await ch.send(content="@everyone", embed=build_vagtplan_embed())
     await interaction.response.send_message("✅ Vagtplan sendt med @everyone.", ephemeral=True)
 
-@tree.command(name="ping", description="Test at botten svarer", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@tree.command(name="ping", description="Test at botten svarer",
+              guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 async def ping_cmd(interaction: discord.Interaction):
     await interaction.response.send_message("Pong!", ephemeral=True)
 
-@tree.command(name="sync", description="Tving slash-kommando sync", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@tree.command(name="sync", description="Tving slash-kommando sync",
+              guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def sync_cmd(interaction: discord.Interaction):
     gid = interaction.guild_id
@@ -344,7 +320,8 @@ async def sync_cmd(interaction: discord.Interaction):
     cmds = await tree.fetch_commands(guild=guild_obj)
     await interaction.response.send_message("Synk: " + ", ".join(c.name for c in cmds), ephemeral=True)
 
-@tree.command(name="cleanup_global", description="Fjern gamle globale commands", guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
+@tree.command(name="cleanup_global", description="Fjern gamle globale commands",
+              guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def cleanup_global_cmd(interaction: discord.Interaction):
     tree.clear_commands(guild=None)
@@ -412,7 +389,8 @@ async def on_ready():
     try:
         if GUILD_ID:
             guild_obj = discord.Object(id=GUILD_ID)
-            tree.clear_commands(guild=None)  # undgå dubletter
+            # undgå dubletter: tøm globalt, sync kun til guild
+            tree.clear_commands(guild=None)
             await tree.sync()
             await tree.sync(guild=guild_obj)
             cmds = await tree.fetch_commands(guild=guild_obj)
@@ -435,4 +413,3 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
-
