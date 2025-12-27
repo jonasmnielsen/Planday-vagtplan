@@ -2,6 +2,7 @@
   "guild_id": 0,
   "channel_name": "🗓️┃planday-dagens-vagtplan",
   "role_disponent": "Disponent",
+  "staff_role_name": "Redder",
   "sheet_id": "1ME2-YiqghGYDChfZ4Rju86Orq81QUTzSlABWiY3Ezqo",
   "timezone": "Europe/Copenhagen",
   "daily_post_hour": 12,
@@ -9,10 +10,5 @@
   "start_time_h": 19,
   "start_time_m": 30,
   "owner_username": "j.jaeger",
-  "admin_discord_id": "442403117414350848",
-  "staff_role_name": "Redder"
+  "admin_discord_id": "442403117414350848"
 }
-
-
-
-
