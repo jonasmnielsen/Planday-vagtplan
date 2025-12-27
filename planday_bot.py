@@ -4,7 +4,7 @@
 # /admin: modal (valgfri besked) -> knapper (Aktiver/Deaktiver)
 # Deaktiver/Aktiver: rydder kanal (beholder kun status/aktiverings-embed), live nedetidsur, auto vagtplan kl. 12, nightly cleanup
 # State i planday_state.json. Kræver rollen "Disponent". Ingen billedfunktion i status-embeds.
-# + NYT: DM til admin med fuld oversigt (tilmeldte/mangler) hver gang nogen trykker.
+# + NYT: Admin får ÉN DM pr vagtplan, og den DM bliver opdateret (redigeret) ved ændringer.
 
 import os
 import json
@@ -68,7 +68,7 @@ STATE_FILE = "planday_state.json"
 # -------------------- Intents & Client --------------------
 intents = discord.Intents.default()
 intents.guilds = True
-intents.members = True  # bruges til at finde rolle-medlemmer (mangler-listen)
+intents.members = True  # kræves for rolle-liste (mangler)
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
@@ -78,11 +78,19 @@ tree = app_commands.CommandTree(bot)
 #   "last_notice": { guild_id: message_id },
 #   "disabled_since": { guild_id: iso_timestamp },
 #   "disabled_by": { guild_id: user_mention },
-#   "note": { guild_id: str }
+#   "note": { guild_id: str },
+#   "admin_dm": { guild_id: { vagtplan_msg_id: admin_dm_msg_id } }   <-- NYT
 # }
 
 def _default_state():
-    return {"enabled": True, "last_notice": {}, "disabled_since": {}, "disabled_by": {}, "note": {}}
+    return {
+        "enabled": True,
+        "last_notice": {},
+        "disabled_since": {},
+        "disabled_by": {},
+        "note": {},
+        "admin_dm": {}
+    }
 
 def load_state():
     try:
@@ -93,6 +101,7 @@ def load_state():
             data.setdefault("disabled_since", {})
             data.setdefault("disabled_by", {})
             data.setdefault("note", {})
+            data.setdefault("admin_dm", {})
             return data
     except Exception:
         return _default_state()
@@ -142,13 +151,6 @@ async def edit_message_embed(guild: discord.Guild, msg_id: int, embed: discord.E
     except Exception:
         pass
 
-async def post_message_embed(guild: discord.Guild, embed: discord.Embed) -> Optional[int]:
-    ch = discord.utils.get(guild.text_channels, name=CHANNEL_NAME)
-    if not ch:
-        return None
-    m = await ch.send(embed=embed)
-    return m.id
-
 async def delete_status_message_if_any(guild: discord.Guild):
     gid = str(guild.id)
     msg_id = state.get("last_notice", {}).get(gid)
@@ -166,20 +168,22 @@ async def delete_status_message_if_any(guild: discord.Guild):
     state["note"].pop(gid, None)
     save_state()
 
-# -------------------- Admin DM / Oversigt --------------------
-async def dm_admin(text: str):
-    """Sender privat DM til admin."""
+# -------------------- Admin DM (send én gang, rediger senere) --------------------
+def _get_admin_dm_id(guild_id: int, vagt_msg_id: int) -> Optional[int]:
+    gid = str(guild_id)
     try:
-        user = bot.get_user(ADMIN_DISCORD_ID) or await bot.fetch_user(ADMIN_DISCORD_ID)
-        if not user:
-            return
-        # Discord begrænser beskedlængde; vi klipper for sikkerhed
-        await user.send(text[:1900])
-    except Exception as e:
-        print("[dm_admin] fejl:", e)
+        return state.get("admin_dm", {}).get(gid, {}).get(str(vagt_msg_id))
+    except Exception:
+        return None
+
+def _set_admin_dm_id(guild_id: int, vagt_msg_id: int, dm_msg_id: int):
+    gid = str(guild_id)
+    state.setdefault("admin_dm", {})
+    state["admin_dm"].setdefault(gid, {})
+    state["admin_dm"][gid][str(vagt_msg_id)] = dm_msg_id
+    save_state()
 
 def _strip_mention(m: str) -> str:
-    # "<@123>" eller "<@!123>"
     m = m.replace("<@!", "").replace("<@", "").replace(">", "")
     return m if m.isdigit() else ""
 
@@ -197,6 +201,14 @@ def _names_from_ids(guild: discord.Guild, ids: set[int]) -> list[str]:
             out.append(mem.display_name)
     return sorted(out, key=str.casefold)
 
+# -------------------- Vagtplan data --------------------
+registreringer = {}
+
+def get_msg_data(msg_id):
+    if msg_id not in registreringer:
+        registreringer[msg_id] = {"deltager": [], "senere": [], "fravaer": [], "disp": []}
+    return registreringer[msg_id]
+
 def build_admin_overview_text(guild: discord.Guild, msg_id: int) -> str:
     data = get_msg_data(msg_id)
 
@@ -205,9 +217,7 @@ def build_admin_overview_text(guild: discord.Guild, msg_id: int) -> str:
     fravaer_ids   = {int(_strip_mention(x)) for x in data["fravaer"]  if _strip_mention(x)}
     disp_ids      = {int(_strip_mention(x)) for x in data["disp"]     if _strip_mention(x)}
 
-    # Hvem "skal" reagere? -> rolle
     required_ids = _role_member_ids(guild, STAFF_ROLE_NAME)
-    # fallback hvis rolle ikke findes:
     if not required_ids:
         required_ids = {m.id for m in guild.members if not m.bot}
 
@@ -220,41 +230,50 @@ def build_admin_overview_text(guild: discord.Guild, msg_id: int) -> str:
     disp_names      = _names_from_ids(guild, disp_ids)
     missing_names   = _names_from_ids(guild, missing_ids)
 
+    now = dt.datetime.now(TZ).strftime("%d-%m-%Y %H:%M:%S")
+
     lines = []
-    lines.append(f"📌 **Vagtplan status** (msg `{msg_id}`)")
+    lines.append(f"📌 **Vagtplan status** (opdateret {now})")
+    lines.append(f"🆔 Vagtplan-besked: `{msg_id}`")
     lines.append(f"👥 Grundlag: **{STAFF_ROLE_NAME}** = {len(required_ids)}")
     lines.append("")
     lines.append(f"✅ Deltager: **{len(deltagere_ids)}**")
-    if deltagere_names:
-        lines.append("   " + ", ".join(deltagere_names))
+    lines.append("   " + (", ".join(deltagere_names) if deltagere_names else "Ingen endnu"))
     lines.append(f"🕓 Deltager senere: **{len(senere_ids)}**")
-    if senere_names:
-        lines.append("   " + ", ".join(senere_names))
+    lines.append("   " + (", ".join(senere_names) if senere_names else "Ingen endnu"))
     lines.append(f"❌ Fraværende: **{len(fravaer_ids)}**")
-    if fravaer_names:
-        lines.append("   " + ", ".join(fravaer_names))
+    lines.append("   " + (", ".join(fravaer_names) if fravaer_names else "Ingen endnu"))
     lines.append(f"🧭 Disponering: **{len(disp_ids)}**")
-    if disp_names:
-        lines.append("   " + ", ".join(disp_names))
+    lines.append("   " + (", ".join(disp_names) if disp_names else "Ingen endnu"))
     lines.append("")
     lines.append(f"⏳ Mangler at reagere: **{len(missing_ids)}**")
     lines.append("   " + (", ".join(missing_names) if missing_names else "Alle har reageret ✅"))
     return "\n".join(lines)
 
-async def notify_admin_on_change(interaction: discord.Interaction, kategori: str):
-    """DM til admin hver gang nogen trykker."""
+async def upsert_admin_overview_dm(guild: discord.Guild, vagt_msg_id: int):
+    """Sender EN DM til admin pr vagtplan og opdaterer (redigerer) den ved ændringer."""
     try:
-        if not interaction.guild:
+        admin_user = bot.get_user(ADMIN_DISCORD_ID) or await bot.fetch_user(ADMIN_DISCORD_ID)
+        if not admin_user:
             return
-        overview = build_admin_overview_text(interaction.guild, interaction.message.id)
-        who = interaction.user
-        await dm_admin(
-            f"🔔 **Ny registrering**\n"
-            f"👤 {who.display_name} ({who.mention}) → **{kategori}**\n\n"
-            f"{overview}"
-        )
+
+        overview = build_admin_overview_text(guild, vagt_msg_id)[:1900]
+        existing_id = _get_admin_dm_id(guild.id, vagt_msg_id)
+
+        if existing_id:
+            try:
+                dm_msg = await admin_user.fetch_message(existing_id)
+                await dm_msg.edit(content=overview)
+                return
+            except Exception:
+                # DM kan være slettet -> send ny
+                pass
+
+        dm_msg = await admin_user.send(overview)
+        _set_admin_dm_id(guild.id, vagt_msg_id, dm_msg.id)
+
     except Exception as e:
-        print("[notify_admin_on_change] fejl:", e)
+        print("[upsert_admin_overview_dm] fejl:", e)
 
 # -------------------- Status-embeds --------------------
 def build_offline_embed(who: str, since_iso: str, note: Optional[str]) -> discord.Embed:
@@ -310,14 +329,7 @@ async def downtime_updater():
     except Exception as e:
         print("[downtime_updater] fejl:", e)
 
-# -------------------- Vagtplan --------------------
-registreringer = {}
-
-def get_msg_data(msg_id):
-    if msg_id not in registreringer:
-        registreringer[msg_id] = {"deltager": [], "senere": [], "fravaer": [], "disp": []}
-    return registreringer[msg_id]
-
+# -------------------- Vagtplan embeds --------------------
 def build_vagtplan_embed_full(starttid: str, besked: str | None = None, img_url: str | None = None, data=None):
     today = dt.datetime.now(TZ).date()
     embed = discord.Embed(
@@ -357,12 +369,10 @@ class VagtplanView(discord.ui.View):
         user_mention = interaction.user.mention
         data = get_msg_data(msg_id)
 
-        # fjern fra alle kategorier først
         for k in data.keys():
             if user_mention in data[k]:
                 data[k].remove(user_mention)
 
-        # tilføj til valgt kategori
         if kategori:
             data[kategori].append(user_mention)
 
@@ -370,8 +380,9 @@ class VagtplanView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
         await interaction.response.send_message(f"✅ Registreret som **{kategori}**", ephemeral=True)
 
-        # ✅ NYT: send privat status til admin
-        await notify_admin_on_change(interaction, kategori)
+        # ✅ opdater den ENE admin-DM (ikke spam)
+        if interaction.guild:
+            await upsert_admin_overview_dm(interaction.guild, interaction.message.id)
 
     @discord.ui.button(label="Deltager", style=discord.ButtonStyle.success, emoji="✅")
     async def deltager(self, interaction: discord.Interaction, _):
@@ -391,9 +402,11 @@ class VagtplanView(discord.ui.View):
         if not any(r.name == ROLE_DISP for r in member.roles):
             await interaction.response.send_message("Kun **Disponent** kan bruge denne knap.", ephemeral=True)
             return
+
         msg_id = interaction.message.id
         data = get_msg_data(msg_id)
         mention = interaction.user.mention
+
         if mention in data["disp"]:
             data["disp"].remove(mention)
         else:
@@ -403,8 +416,9 @@ class VagtplanView(discord.ui.View):
         await interaction.message.edit(embed=embed, view=self)
         await interaction.response.send_message("🧭 Vagtplan opdateret ✅", ephemeral=True)
 
-        # ✅ NYT: send privat status til admin
-        await notify_admin_on_change(interaction, "disp")
+        # ✅ opdater admin-DM
+        if interaction.guild:
+            await upsert_admin_overview_dm(interaction.guild, interaction.message.id)
 
 class BeskedModal(discord.ui.Modal, title="Opret dagens vagtplan"):
     starttid = discord.ui.TextInput(
@@ -584,21 +598,23 @@ async def vagtplan_cmd(interaction: discord.Interaction):
         view = VagtplanView(starttid, besked, billede)
         sent = await ch.send(content="@everyone", embed=embed, view=view)
         get_msg_data(sent.id)
+
         await inter.response.send_message("✅ Vagtplan sendt med @everyone.", ephemeral=True)
 
-        # send initial oversigt til admin
-        try:
-            await dm_admin(build_admin_overview_text(guild, sent.id))
-        except Exception:
-            pass
+        # ✅ Send / opdater admin DM for denne vagtplan (første gang)
+        await upsert_admin_overview_dm(guild, sent.id)
 
     await interaction.response.send_modal(BeskedModal(after_modal))
 
-@tree.command(name="status_dm", description="Send status for seneste vagtplan i DM til admin",
+@tree.command(name="status_dm", description="Opdater admin-DM med seneste vagtplan status",
               guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
 @app_commands.checks.has_role(ROLE_DISP)
 async def status_dm_cmd(interaction: discord.Interaction):
-    ch = discord.utils.get(interaction.guild.text_channels, name=CHANNEL_NAME) if interaction.guild else None
+    if not interaction.guild:
+        await interaction.response.send_message("Kan kun bruges i en server.", ephemeral=True)
+        return
+
+    ch = discord.utils.get(interaction.guild.text_channels, name=CHANNEL_NAME)
     if not ch:
         await interaction.response.send_message("Kanal ikke fundet.", ephemeral=True)
         return
@@ -613,9 +629,8 @@ async def status_dm_cmd(interaction: discord.Interaction):
         await interaction.response.send_message("Ingen vagtplan fundet.", ephemeral=True)
         return
 
-    txt = build_admin_overview_text(interaction.guild, last_msg_id)
-    await dm_admin(txt)
-    await interaction.response.send_message("📩 Status sendt i DM til admin.", ephemeral=True)
+    await upsert_admin_overview_dm(interaction.guild, last_msg_id)
+    await interaction.response.send_message("📩 Admin-DM er opdateret.", ephemeral=True)
 
 @tree.command(name="ping", description="Test at botten svarer",
               guild=discord.Object(id=GUILD_ID) if GUILD_ID else None)
@@ -660,6 +675,7 @@ async def daily_post():
                 except Exception:
                     pass
         embed = build_vagtplan_embed_auto()
+        # auto-post uden knapper (som din oprindelige) – kan udvides senere
         await ch.send(content="@everyone", embed=embed, view=None)
         print(f"[AUTO] Ny vagtplan sendt til {guild.name}")
 
@@ -725,3 +741,5 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("DISCORD_TOKEN mangler i miljøvariablerne")
     bot.run(TOKEN)
+
+
