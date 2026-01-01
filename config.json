@@ -3,16 +3,14 @@
   "channel_name": "🗓️┃planday-dagens-vagtplan",
   "role_disponent": "Disponent",
   "staff_role_name": "Autoredder",
-  "sheet_id": "1ME2-YiqghGYDChfZ4Rju86Orq81QUTzSlABWiY3Ezqo",
   "timezone": "Europe/Copenhagen",
-  "daily_post_hour": 12,
-  "daily_post_minute": 0,
   "start_time_h": 19,
   "start_time_m": 30,
   "owner_username": "j.jaeger",
   "admin_discord_id": "442403117414350848",
 
-  "reminder_fixed_times": ["18:00"],
-  "reminder_before_start_minutes": [30],
+  "reminder_after_post_minutes": 30,
   "reminder_dm_text": "⏰ Husk at reagere på dagens vagtplan (Deltager / Senere / Fraværende)."
 }
+
+
