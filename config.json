@@ -4,13 +4,14 @@
   "role_disponent": "Disponent",
   "staff_role_name": "Autoredder",
   "timezone": "Europe/Copenhagen",
-  "start_time_h": 19,
-  "start_time_m": 30,
-  "owner_username": "j.jaeger",
+
   "admin_discord_id": "442403117414350848",
 
-  "reminder_after_post_minutes": 30,
+  "auto_post_hour": 12,
+  "auto_post_minute": 0,
+  "auto_start_time": "19:30",
+  "auto_message": "Automatisk vagtplan – husk at stemple ind hvad bil du kører i.",
+
+  "reminder_before_start_minutes": 30,
   "reminder_dm_text": "⏰ Husk at reagere på dagens vagtplan (Deltager / Senere / Fraværende)."
 }
-
-
